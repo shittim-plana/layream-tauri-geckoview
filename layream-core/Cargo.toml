@@ -1,0 +1,29 @@
+[package]
+name = "layream-core"
+version = "0.1.0"
+edition = "2021"
+description = "Core library for Layream — prompt editor, AI testing studio"
+license = "LicenseRef-Layream"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+aes-gcm = "0.10"
+sha2 = "0.10"
+flate2 = "1"
+rmp-serde = "1"
+regex = "1"
+thiserror = "2"
+hex = "0.4"
+serde_bytes = "0.11"
+rmpv = { version = "1", features = ["with-serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+tokio = { version = "1", features = ["sync", "time"] }
+futures = "0.3"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+base64 = "0.22"
+rand = "0.9"
+
+[dev-dependencies]
+hex-literal = "0.4"
+tokio = { version = "1", features = ["full"] }

@@ -1,0 +1,23 @@
+[package]
+name = "layream-app"
+version = "0.1.0"
+edition = "2021"
+description = "Layream — prompt editor, AI testing studio"
+
+[dependencies]
+layream-core = { path = "../../layream-core" }
+tauri = { version = "2", features = [] }
+tauri-plugin-log = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+tokio = { version = "1", features = ["full"] }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+name = "layream_app"

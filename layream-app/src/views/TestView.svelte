@@ -132,6 +132,46 @@
   let hypaEmbeddingModel = $state("gemini-embedding-2");
   let hypaSimilarRatio = $state(0.7);
   let hypaMemoryCount = $state(0);
+  let hypaSummaries = $state([]);
+
+  async function loadHypa() {
+    try {
+      const data = await invoke("cmd_load_hypa");
+      hypaSummaries = data?.summaries || [];
+      hypaMemoryCount = hypaSummaries.length;
+    } catch (e) { console.warn("Failed to load HyPA:", e); }
+  }
+
+  async function saveHypa() {
+    try {
+      await invoke("cmd_save_hypa", { summaries: { summaries: hypaSummaries } });
+    } catch (e) { console.warn("Failed to save HyPA:", e); }
+  }
+
+  function exportHypa() {
+    const blob = new Blob([JSON.stringify({ summaries: hypaSummaries }, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "hypa-export.json"; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function importHypa(file) {
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (data?.summaries) {
+        hypaSummaries = data.summaries;
+        hypaMemoryCount = hypaSummaries.length;
+        await saveHypa();
+      }
+    } catch (e) { console.error("HyPA import failed:", e); }
+  }
+
+  function clearHypa() {
+    hypaSummaries = [];
+    hypaMemoryCount = 0;
+    saveHypa();
+  }
 
   // --- Request Logs ---
   let requestLogs = $state([]);
@@ -175,7 +215,7 @@
   <div class="tab-bar">
     <button class="tab-btn" class:active={subTab === "chat"} onclick={() => subTab = "chat"}>Chat</button>
     <button class="tab-btn" class:active={subTab === "autopilot"} onclick={() => subTab = "autopilot"}>Autopilot</button>
-    <button class="tab-btn" class:active={subTab === "hypa"} onclick={() => subTab = "hypa"}>HyPA</button>
+    <button class="tab-btn" class:active={subTab === "hypa"} onclick={() => { subTab = "hypa"; loadHypa(); }}>HyPA</button>
     <button class="tab-btn" class:active={subTab === "preview"} onclick={() => { subTab = "preview"; loadPreview(); }}>Preview</button>
     <button class="tab-btn" class:active={subTab === "logs"} onclick={() => { subTab = "logs"; loadLogs(); }}>Logs</button>
   </div>
@@ -338,9 +378,14 @@
           </div>
 
           <div style="display: flex; gap: 6px; margin-top: 12px;">
-            <button class="btn btn-sm btn-secondary">Export</button>
-            <button class="btn btn-sm btn-secondary">Import</button>
-            <button class="btn btn-sm btn-danger">Clear All</button>
+            <button class="btn btn-sm btn-secondary" onclick={exportHypa}>Export</button>
+            <button class="btn btn-sm btn-secondary" style="position: relative; overflow: hidden;">
+              Import
+              <input type="file" accept="application/json" style="position: absolute; inset: 0; opacity: 0; cursor: pointer;"
+                onchange={async (e) => { const f = e.target.files?.[0]; if (f) await importHypa(f); e.target.value = ""; }}
+              />
+            </button>
+            <button class="btn btn-sm btn-danger" onclick={clearHypa}>Clear All</button>
           </div>
         {/if}
       </div>

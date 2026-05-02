@@ -646,7 +646,7 @@
     <div class="card-header"><span class="card-title">About</span></div>
     <div class="card-body">
       <p style="font-size: 13px; color: var(--fg2);">
-        Layream v0.1.0<br />Prompt editor &amp; AI testing studio<br />Powered by Rust + Tauri 2.0
+        Layream v0.2.0-alpha<br />Prompt editor &amp; AI testing studio<br />Powered by Rust + Tauri 2.0
       </p>
     </div>
   </div>

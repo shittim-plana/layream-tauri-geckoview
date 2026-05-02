@@ -20,7 +20,7 @@ pub struct CharacterData {
 
 pub fn read_character(name: &str, data: &[u8]) -> Result<CharacterData, LayreamError> {
     let lower = name.to_lowercase();
-    if lower.ends_with(".charx") {
+    if lower.ends_with(".charx") || lower.ends_with(".jpeg") {
         read_charx(data)
     } else if lower.ends_with(".png") {
         read_png(data)

@@ -1,12 +1,12 @@
 <script>
   import { invoke } from "../lib/tauri.js";
 
-  let provider = $state("vertex");
   let projectId = $state("");
   let region = $state("us-central1");
   let vertexModel = $state("gemini-2.5-flash");
+  let vertexAuthStatus = $state("Not connected");
   let gcaModel = $state("gemini-2.5-flash");
-  let authStatus = $state("Not connected");
+  let gcaAuthStatus = $state("Not connected");
   let voyageKey = $state("");
   let mistralKey = $state("");
   let mistralModel = $state("mistral-small-2603");
@@ -16,34 +16,33 @@
   let fetchingVertex = $state(false);
 
   const vertexModels = [
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
-    "gemini-3.0-flash-preview",
-    "gemini-3.1-flash-lite-preview",
     "gemini-3.1-pro-preview",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3.0-flash-preview",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
   ];
 
   const vertexEmbeddingModels = [
-    "gemini-embedding-001",
     "gemini-embedding-2",
+    "gemini-embedding-001",
   ];
 
   const gcaModels = [
+    "gemini-3.1-pro-preview",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-2.5-pro",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
-    "gemini-2.5-pro",
-    "gemini-3-flash-preview",
-    "gemini-3-pro-preview",
-    "gemini-3.1-flash-lite-preview",
-    "gemini-3.1-pro",
-    "gemini-3.1-pro-preview",
   ];
 
   const defaultMistralModels = [
-    "mistral-small-2603",
-    "mistral-medium-2508",
-    "magistral-medium-2509",
     "mistral-large-latest",
+    "magistral-medium-2509",
+    "mistral-medium-2508",
+    "mistral-small-2603",
     "codestral-2508",
     "ministral-3-8b-2512",
     "labs-devstral-2512",
@@ -58,24 +57,53 @@
     "global",
   ];
 
-  async function startAuth() {
+  async function startVertexAuth() {
     try {
-      const url = await invoke("oauth_start", { projectId, region });
+      const url = await invoke("vertex_oauth_start");
       if (url) {
         window.open(url, "_blank");
-        authStatus = "Waiting for callback...";
+        vertexAuthStatus = "Waiting for callback...";
       }
     } catch (e) {
-      authStatus = `Error: ${e}`;
+      vertexAuthStatus = `Error: ${e}`;
     }
   }
 
-  async function checkAuth() {
+  async function checkVertexAuth() {
     try {
-      const result = await invoke("oauth_status");
-      authStatus = result || "Unknown";
+      const result = await invoke("vertex_oauth_status");
+      if (result?.connected) {
+        vertexAuthStatus = result.expired ? "Token expired — reconnect" : "Connected";
+      } else {
+        vertexAuthStatus = "Not connected";
+      }
     } catch (e) {
-      authStatus = `Error: ${e}`;
+      vertexAuthStatus = `Error: ${e}`;
+    }
+  }
+
+  async function startGcaAuth() {
+    try {
+      const url = await invoke("gca_oauth_start");
+      if (url) {
+        window.open(url, "_blank");
+        gcaAuthStatus = "Waiting for callback...";
+      }
+    } catch (e) {
+      gcaAuthStatus = `Error: ${e}`;
+    }
+  }
+
+  async function checkGcaAuth() {
+    try {
+      const result = await invoke("gca_oauth_status");
+      if (result?.connected) {
+        gcaAuthStatus = result.expired ? "Token expired — reconnect" : "Connected";
+      } else {
+        gcaAuthStatus = "Not connected";
+      }
+    } catch (e) {
+      gcaAuthStatus = `Error: ${e}`;
     }
   }
 
@@ -119,16 +147,7 @@
 
 <div>
   <div class="card">
-    <h3 style="margin-bottom: 12px;">API Provider</h3>
-    <div class="provider-tabs">
-      <button class:active={provider === "vertex"} onclick={() => provider = "vertex"}>Vertex AI</button>
-      <button class:active={provider === "gca"} onclick={() => provider = "gca"}>GCA</button>
-    </div>
-  </div>
-
-  {#if provider === "vertex"}
-  <div class="card">
-    <h3 style="margin-bottom: 12px;">Vertex AI OAuth</h3>
+    <h3>Vertex AI OAuth</h3>
     <div class="field">
       <label>Project ID</label>
       <input type="text" bind:value={projectId} placeholder="my-gcp-project" />
@@ -149,23 +168,21 @@
             <option value={m}>{m}</option>
           {/each}
         </select>
-        <button onclick={fetchVertexModels} disabled={fetchingVertex} style="white-space: nowrap;">
+        <button onclick={fetchVertexModels} disabled={fetchingVertex}>
           {fetchingVertex ? "..." : "Fetch"}
         </button>
       </div>
-      <input type="text" bind:value={vertexModel} placeholder="or type custom model ID" style="margin-top: 6px; font-size: 12px;" />
+      <input type="text" bind:value={vertexModel} placeholder="custom model ID" style="margin-top: 6px; font-size: 12px;" />
     </div>
     <div style="display: flex; gap: 8px;">
-      <button onclick={startAuth}>Connect</button>
-      <button onclick={checkAuth}>Check Status</button>
+      <button onclick={startVertexAuth}>Connect</button>
+      <button onclick={checkVertexAuth}>Check Status</button>
     </div>
-    <p style="margin-top: 8px; font-size: 13px; color: var(--text-dim);">{authStatus}</p>
+    <p class="status">{vertexAuthStatus}</p>
   </div>
-  {/if}
 
-  {#if provider === "gca"}
   <div class="card">
-    <h3 style="margin-bottom: 12px;">GCA (Gemini Code Assistant)</h3>
+    <h3>Gemini Code Assist</h3>
     <div class="field">
       <label>Model</label>
       <select bind:value={gcaModel} style="width: 100%;">
@@ -173,18 +190,17 @@
           <option value={m}>{m}</option>
         {/each}
       </select>
-      <input type="text" bind:value={gcaModel} placeholder="or type custom model ID" style="margin-top: 6px; font-size: 12px;" />
+      <input type="text" bind:value={gcaModel} placeholder="custom model ID" style="margin-top: 6px; font-size: 12px;" />
     </div>
     <div style="display: flex; gap: 8px;">
-      <button onclick={startAuth}>Connect</button>
-      <button onclick={checkAuth}>Check Status</button>
+      <button onclick={startGcaAuth}>Connect</button>
+      <button onclick={checkGcaAuth}>Check Status</button>
     </div>
-    <p style="margin-top: 8px; font-size: 13px; color: var(--text-dim);">{authStatus}</p>
+    <p class="status">{gcaAuthStatus}</p>
   </div>
-  {/if}
 
   <div class="card">
-    <h3 style="margin-bottom: 12px;">Mistral AI</h3>
+    <h3>Mistral AI</h3>
     <div class="field">
       <label>API Key</label>
       <input type="password" bind:value={mistralKey} placeholder="..." />
@@ -197,11 +213,11 @@
             <option value={m}>{m}</option>
           {/each}
         </select>
-        <button onclick={fetchMistralModels} disabled={!mistralKey || fetchingMistral} style="white-space: nowrap;">
+        <button onclick={fetchMistralModels} disabled={!mistralKey || fetchingMistral}>
           {fetchingMistral ? "..." : "Fetch"}
         </button>
       </div>
-      <input type="text" bind:value={mistralModel} placeholder="or type custom model ID" style="margin-top: 6px; font-size: 12px;" />
+      <input type="text" bind:value={mistralModel} placeholder="custom model ID" style="margin-top: 6px; font-size: 12px;" />
     </div>
     <p style="font-size: 12px; color: var(--text-dim);">
       Free experiment plan available (opt-out).
@@ -209,7 +225,7 @@
   </div>
 
   <div class="card">
-    <h3 style="margin-bottom: 12px;">Voyage AI (Embeddings)</h3>
+    <h3>Voyage AI (Embeddings)</h3>
     <div class="field">
       <label>API Key</label>
       <input type="password" bind:value={voyageKey} placeholder="pa-..." />
@@ -220,7 +236,7 @@
   </div>
 
   <div class="card">
-    <h3 style="margin-bottom: 8px;">About</h3>
+    <h3>About</h3>
     <p style="font-size: 13px; color: var(--text-dim);">
       Layream v0.1.0<br />
       Prompt editor, AI testing studio<br />
@@ -230,31 +246,21 @@
 </div>
 
 <style>
-  .provider-tabs {
-    display: flex;
-    gap: 4px;
+  h3 {
+    margin-bottom: 12px;
   }
-  .provider-tabs button {
-    flex: 1;
-    padding: 8px;
-    border: 1px solid var(--border);
-    background: transparent;
+  .status {
+    margin-top: 8px;
+    font-size: 13px;
     color: var(--text-dim);
-    border-radius: 6px;
-    cursor: pointer;
-  }
-  .provider-tabs button.active {
-    background: var(--accent);
-    color: var(--text);
-    border-color: var(--accent);
   }
   select {
     width: 100%;
     padding: 8px 10px;
-    background: var(--bg-input);
+    background: var(--bg-input, var(--surface));
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--radius);
     font-size: 14px;
     appearance: auto;
   }

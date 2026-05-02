@@ -35,5 +35,11 @@
       "debugApplicationIdSuffix": ".debug"
     }
   },
-  "plugins": {}
+  "plugins": {
+    "deep-link": {
+      "mobile": [
+        { "host": "oauth", "pathPrefix": ["/callback"] }
+      ]
+    }
+  }
 }

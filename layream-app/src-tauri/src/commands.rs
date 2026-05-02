@@ -2,7 +2,32 @@ use layream_core::cbs::parser::{CbsContext, evaluate};
 use layream_core::charx;
 use layream_core::preset;
 use layream_core::types::BotPreset;
+use layream_core::vertex_auth::{
+    self, OAuthCredentials, PkceChallenge, Tokens,
+    VERTEX_CLIENT_ID, LAYREAM_REDIRECT_URI,
+};
+use layream_core::gca::GCA_OAUTH_CLIENT_ID;
 use serde_json::Value;
+use std::sync::Mutex;
+use tauri::State;
+
+pub struct AuthState {
+    pub vertex_pkce: Mutex<Option<PkceChallenge>>,
+    pub vertex_tokens: Mutex<Option<Tokens>>,
+    pub gca_pkce: Mutex<Option<PkceChallenge>>,
+    pub gca_tokens: Mutex<Option<Tokens>>,
+}
+
+impl Default for AuthState {
+    fn default() -> Self {
+        Self {
+            vertex_pkce: Mutex::new(None),
+            vertex_tokens: Mutex::new(None),
+            gca_pkce: Mutex::new(None),
+            gca_tokens: Mutex::new(None),
+        }
+    }
+}
 
 #[tauri::command]
 pub fn load_preset(name: String, data: Vec<u8>) -> Result<Value, String> {
@@ -51,17 +76,103 @@ pub fn evaluate_cbs(input: String, char_name: String, user_name: String) -> Stri
 
 #[tauri::command]
 pub async fn chat_send(_message: String) -> Result<String, String> {
-    Err("Not configured. Set up Vertex AI in Settings first.".into())
+    Err("Not configured. Set up API provider in Settings first.".into())
 }
 
 #[tauri::command]
-pub fn oauth_start(_project_id: String, _region: String) -> Result<String, String> {
-    Err("OAuth configuration needed. Provide client_id and client_secret.".into())
+pub fn vertex_oauth_start(state: State<'_, AuthState>) -> Result<String, String> {
+    let pkce = vertex_auth::generate_pkce();
+    let creds = OAuthCredentials {
+        client_id: VERTEX_CLIENT_ID.to_string(),
+        client_secret: None,
+        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
+    };
+    let url = vertex_auth::build_auth_url(&creds, Some(&pkce));
+    *state.vertex_pkce.lock().unwrap() = Some(pkce);
+    Ok(url)
 }
 
 #[tauri::command]
-pub fn oauth_status() -> String {
-    "Not connected".into()
+pub fn gca_oauth_start(state: State<'_, AuthState>) -> Result<String, String> {
+    let pkce = vertex_auth::generate_pkce();
+    let creds = OAuthCredentials {
+        client_id: GCA_OAUTH_CLIENT_ID.to_string(),
+        client_secret: None,
+        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
+    };
+    let url = vertex_auth::build_auth_url(&creds, Some(&pkce));
+    *state.gca_pkce.lock().unwrap() = Some(pkce);
+    Ok(url)
+}
+
+#[tauri::command]
+pub async fn vertex_oauth_callback(code: String, state: State<'_, AuthState>) -> Result<String, String> {
+    let pkce = state.vertex_pkce.lock().unwrap().take()
+        .ok_or("No pending PKCE challenge")?;
+    let creds = OAuthCredentials {
+        client_id: VERTEX_CLIENT_ID.to_string(),
+        client_secret: None,
+        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
+    };
+    let client = reqwest::Client::new();
+    let tokens = vertex_auth::exchange_code(&client, &creds, &code, Some(&pkce.verifier))
+        .await
+        .map_err(|e| e.to_string())?;
+    *state.vertex_tokens.lock().unwrap() = Some(tokens);
+    Ok("Vertex AI connected".into())
+}
+
+#[tauri::command]
+pub async fn gca_oauth_callback(code: String, state: State<'_, AuthState>) -> Result<String, String> {
+    let pkce = state.gca_pkce.lock().unwrap().take()
+        .ok_or("No pending PKCE challenge")?;
+    let creds = OAuthCredentials {
+        client_id: GCA_OAUTH_CLIENT_ID.to_string(),
+        client_secret: None,
+        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
+    };
+    let client = reqwest::Client::new();
+    let tokens = vertex_auth::exchange_code(&client, &creds, &code, Some(&pkce.verifier))
+        .await
+        .map_err(|e| e.to_string())?;
+    *state.gca_tokens.lock().unwrap() = Some(tokens);
+    Ok("GCA connected".into())
+}
+
+#[tauri::command]
+pub fn vertex_oauth_status(state: State<'_, AuthState>) -> Value {
+    let tokens = state.vertex_tokens.lock().unwrap();
+    match tokens.as_ref() {
+        Some(t) if !t.is_expired() => serde_json::json!({
+            "connected": true,
+            "expired": false,
+        }),
+        Some(_) => serde_json::json!({
+            "connected": true,
+            "expired": true,
+        }),
+        None => serde_json::json!({
+            "connected": false,
+        }),
+    }
+}
+
+#[tauri::command]
+pub fn gca_oauth_status(state: State<'_, AuthState>) -> Value {
+    let tokens = state.gca_tokens.lock().unwrap();
+    match tokens.as_ref() {
+        Some(t) if !t.is_expired() => serde_json::json!({
+            "connected": true,
+            "expired": false,
+        }),
+        Some(_) => serde_json::json!({
+            "connected": true,
+            "expired": true,
+        }),
+        None => serde_json::json!({
+            "connected": false,
+        }),
+    }
 }
 
 #[tauri::command]

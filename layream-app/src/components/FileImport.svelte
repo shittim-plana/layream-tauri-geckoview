@@ -1,57 +1,80 @@
 <script>
+  import { isTauri } from "../lib/tauri.js";
+
   let { accept = "*/*", label = "파일 불러오기", extensions = "", onfile, disabled = false } = $props();
 
-  let inputEl;
-  let dragover = $state(false);
   let loading = $state(false);
+  let dragover = $state(false);
+  let inputEl;
 
-  function handleClick() {
-    if (!disabled && !loading && inputEl) inputEl.click();
-  }
-
-  async function processFile(file) {
-    if (!file || !onfile) return;
+  async function pickFile() {
+    if (disabled || loading) return;
     loading = true;
     try {
-      let data;
-      if (file.arrayBuffer) {
-        const buf = await file.arrayBuffer();
-        data = Array.from(new Uint8Array(buf));
+      if (isTauri) {
+        const { open } = await import("@tauri-apps/plugin-dialog");
+        const { readFile } = await import("@tauri-apps/plugin-fs");
+        const selected = await open({ multiple: false });
+        if (selected) {
+          const path = typeof selected === "string" ? selected : selected.path;
+          if (path) {
+            const bytes = await readFile(path);
+            const name = path.split("/").pop() || path.split("\\").pop() || "file";
+            onfile?.(name, Array.from(bytes));
+          }
+        }
       } else {
-        data = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(Array.from(new Uint8Array(reader.result)));
-          reader.onerror = () => reject(reader.error);
-          reader.readAsArrayBuffer(file);
-        });
+        await pickViaInput();
       }
-      onfile(file.name, data);
     } catch (e) {
-      console.error("File read error:", e);
+      console.error("File pick error:", e);
+      await pickViaInput();
     }
     loading = false;
   }
 
-  function handleChange(e) {
-    const file = e.target?.files?.[0];
-    if (file) processFile(file);
-    if (inputEl) inputEl.value = "";
+  function pickViaInput() {
+    return new Promise((resolve) => {
+      if (!inputEl) { resolve(); return; }
+      inputEl.onchange = async (e) => {
+        const file = e.target?.files?.[0];
+        if (file) {
+          try {
+            const buf = await (file.arrayBuffer ? file.arrayBuffer() : readFileAsArrayBuffer(file));
+            onfile?.(file.name, Array.from(new Uint8Array(buf)));
+          } catch (err) { console.error("File read error:", err); }
+        }
+        inputEl.value = "";
+        resolve();
+      };
+      inputEl.click();
+      setTimeout(resolve, 30000);
+    });
+  }
+
+  function readFileAsArrayBuffer(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(file);
+    });
   }
 
   function handleDrop(e) {
     e.preventDefault();
     dragover = false;
     const file = e.dataTransfer?.files?.[0];
-    if (file) processFile(file);
-  }
-
-  function handleDragOver(e) {
-    e.preventDefault();
-    dragover = true;
-  }
-
-  function handleDragLeave() {
-    dragover = false;
+    if (file && !loading) {
+      loading = true;
+      (async () => {
+        try {
+          const buf = await (file.arrayBuffer ? file.arrayBuffer() : readFileAsArrayBuffer(file));
+          onfile?.(file.name, Array.from(new Uint8Array(buf)));
+        } catch (err) { console.error("Drop read error:", err); }
+        loading = false;
+      })();
+    }
   }
 </script>
 
@@ -60,11 +83,11 @@
   class:dragover
   role="button"
   tabindex="0"
-  onclick={handleClick}
-  onkeydown={(e) => { if (e.key === "Enter") handleClick(); }}
+  onclick={pickFile}
+  onkeydown={(e) => { if (e.key === "Enter") pickFile(); }}
   ondrop={handleDrop}
-  ondragover={handleDragOver}
-  ondragleave={handleDragLeave}
+  ondragover={(e) => { e.preventDefault(); dragover = true; }}
+  ondragleave={() => { dragover = false; }}
 >
   {#if loading}
     <div class="spinner"></div>
@@ -84,7 +107,7 @@
     bind:this={inputEl}
     type="file"
     accept={accept}
-    onchange={handleChange}
     disabled={disabled || loading}
+    style="display: none;"
   />
 </div>

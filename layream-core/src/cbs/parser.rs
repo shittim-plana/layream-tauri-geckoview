@@ -54,14 +54,11 @@ impl Default for CbsContext {
     }
 }
 
-#[allow(dead_code)]
-enum BlockType {
-    When { active: bool },
-    Pure,
-    Code,
-    Escape,
-    Each { items: Vec<String>, var_name: String },
-    Func { name: String, args: Vec<String> },
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum WsMode {
+    Normal,
+    Keep,
+    Legacy,
 }
 
 pub fn evaluate(input: &str, ctx: &mut CbsContext) -> String {
@@ -80,18 +77,77 @@ fn evaluate_depth(input: &str, ctx: &mut CbsContext, depth: usize) -> String {
     while pos < bytes.len() {
         if pos + 1 < bytes.len() && bytes[pos] == b'{' && bytes[pos + 1] == b'{' {
             if let Some(end) = find_closing(input, pos + 2) {
-                let tag = &input[pos + 2..end];
+                let tag = input[pos + 2..end].trim();
+
+                if tag.starts_with('#') || tag.starts_with(":each") {
+                    let block_name = extract_block_name(tag);
+                    let after_tag = end + 2;
+                    if let Some((body, close_end)) = find_block_end(input, after_tag, &block_name) {
+                        let evaluated = evaluate_block_with_body(tag, body, ctx, depth);
+                        result.push_str(&evaluated);
+                        pos = close_end;
+                        continue;
+                    }
+                }
+
                 let evaluated = evaluate_tag(tag, ctx, depth);
                 result.push_str(&evaluated);
                 pos = end + 2;
                 continue;
             }
         }
-        result.push(bytes[pos] as char);
-        pos += 1;
+        let ch_len = utf8_char_len(bytes[pos]);
+        result.push_str(&input[pos..pos + ch_len]);
+        pos += ch_len;
     }
 
     result
+}
+
+fn extract_block_name(tag: &str) -> String {
+    let tag_lower = tag.to_lowercase();
+    let name_part = if tag_lower.starts_with(":each") || tag_lower.starts_with("#each") {
+        "each"
+    } else if let Some(rest) = tag_lower.strip_prefix('#') {
+        if let Some(idx) = rest.find(|c: char| c == ' ' || c == ':') {
+            &rest[..idx]
+        } else {
+            rest
+        }
+    } else {
+        return String::new();
+    };
+    name_part.to_string()
+}
+
+fn find_block_end<'a>(input: &'a str, start: usize, block_name: &str) -> Option<(&'a str, usize)> {
+    let close_tag = format!("/{}", block_name);
+    let open_prefix = format!("#{}", block_name);
+    let open_prefix_colon = format!(":{}", block_name);
+    let mut nest = 1u32;
+    let mut i = start;
+    let bytes = input.as_bytes();
+
+    while i < bytes.len() {
+        if i + 1 < bytes.len() && bytes[i] == b'{' && bytes[i + 1] == b'{' {
+            if let Some(end) = find_closing(input, i + 2) {
+                let inner = input[i + 2..end].trim().to_lowercase();
+                if inner.starts_with(&open_prefix) || inner.starts_with(&open_prefix_colon) {
+                    nest += 1;
+                } else if inner.starts_with(&close_tag) {
+                    nest -= 1;
+                    if nest == 0 {
+                        let body = &input[start..i];
+                        return Some((body, end + 2));
+                    }
+                }
+                i = end + 2;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    None
 }
 
 fn find_closing(input: &str, start: usize) -> Option<usize> {
@@ -122,10 +178,6 @@ fn find_closing(input: &str, start: usize) -> Option<usize> {
 fn evaluate_tag(tag: &str, ctx: &mut CbsContext, depth: usize) -> String {
     let tag = tag.trim();
 
-    if tag.starts_with('#') {
-        return evaluate_block(tag, ctx, depth);
-    }
-
     if tag.starts_with("//") {
         return String::new();
     }
@@ -145,9 +197,296 @@ fn evaluate_tag(tag: &str, ctx: &mut CbsContext, depth: usize) -> String {
     call_function(&func_name, &args, ctx, depth)
 }
 
-fn evaluate_block(tag: &str, _ctx: &mut CbsContext, _depth: usize) -> String {
-    let _ = tag;
-    String::new()
+fn evaluate_block_with_body(tag: &str, body: &str, ctx: &mut CbsContext, depth: usize) -> String {
+    let tag_lower = tag.to_lowercase();
+
+    if tag_lower.starts_with("#puredisplay") || tag_lower.starts_with("#pure") {
+        return body.replace("{{", "\\{\\{").replace("}}", "\\}\\}");
+    }
+
+    if tag_lower.starts_with("#if_pure") || tag_lower.starts_with("#ifpure") {
+        let condition = tag.splitn(2, |c: char| c == ' ' || c == ':')
+            .nth(1)
+            .unwrap_or("")
+            .trim_start_matches(':');
+        let cond_val = evaluate_depth(condition.trim(), ctx, depth + 1);
+        if is_truthy(&cond_val) {
+            return evaluate_depth(body, ctx, depth + 1);
+        }
+        return String::new();
+    }
+
+    if tag_lower.starts_with("#if") {
+        let condition = tag.splitn(2, |c: char| c == ' ')
+            .nth(1)
+            .unwrap_or("");
+        let cond_val = evaluate_depth(condition.trim(), ctx, depth + 1);
+        if is_truthy(&cond_val) {
+            return trim_block_lines(&evaluate_depth(body, ctx, depth + 1), WsMode::Legacy);
+        }
+        return String::new();
+    }
+
+    if tag_lower.starts_with("#when") || tag_lower.starts_with(":when") {
+        return evaluate_when_block(tag, body, ctx, depth);
+    }
+
+    if tag_lower.starts_with("#each") || tag_lower.starts_with(":each") {
+        return evaluate_each_block(tag, body, ctx, depth);
+    }
+
+    body.to_string()
+}
+
+fn evaluate_when_block(tag: &str, body: &str, ctx: &mut CbsContext, depth: usize) -> String {
+    let raw_args = if tag.contains("::") {
+        let rest = tag.splitn(2, "::").nth(1).unwrap_or("");
+        rest.split("::").map(|s| s.to_string()).collect::<Vec<_>>()
+    } else {
+        let rest = tag.splitn(2, ' ').nth(1).unwrap_or("").trim();
+        if rest.is_empty() {
+            vec![]
+        } else {
+            vec![rest.to_string()]
+        }
+    };
+
+    let mut ws_mode = WsMode::Normal;
+    let mut statement: Vec<String> = Vec::new();
+
+    for arg in &raw_args {
+        let lower = arg.to_lowercase();
+        match lower.as_str() {
+            "keep" => ws_mode = WsMode::Keep,
+            "legacy" => ws_mode = WsMode::Legacy,
+            _ => statement.push(arg.clone()),
+        }
+    }
+
+    let condition_result = evaluate_when_condition(&mut statement, ctx, depth);
+
+    if ws_mode == WsMode::Legacy {
+        if condition_result {
+            return trim_block_lines(&evaluate_depth(body, ctx, depth + 1), WsMode::Legacy);
+        }
+        return String::new();
+    }
+
+    let (true_body, false_body) = split_else(body);
+
+    let content = if condition_result {
+        true_body
+    } else {
+        false_body.unwrap_or("")
+    };
+
+    let evaluated = evaluate_depth(content, ctx, depth + 1);
+    trim_block_lines(&evaluated, ws_mode)
+}
+
+fn evaluate_when_condition(statement: &mut Vec<String>, ctx: &mut CbsContext, depth: usize) -> bool {
+    if statement.is_empty() {
+        return false;
+    }
+
+    while statement.len() >= 3 {
+        let right = statement.pop().unwrap();
+        let op = statement.pop().unwrap();
+        let left = statement.pop().unwrap();
+
+        let op_lower = op.to_lowercase();
+        let result = match op_lower.as_str() {
+            "and" => {
+                let l = evaluate_depth(&left, ctx, depth + 1);
+                let r = evaluate_depth(&right, ctx, depth + 1);
+                is_truthy(&l) && is_truthy(&r)
+            }
+            "or" => {
+                let l = evaluate_depth(&left, ctx, depth + 1);
+                let r = evaluate_depth(&right, ctx, depth + 1);
+                is_truthy(&l) || is_truthy(&r)
+            }
+            "is" => {
+                let l = evaluate_depth(&left, ctx, depth + 1);
+                let r = evaluate_depth(&right, ctx, depth + 1);
+                l == r
+            }
+            "isnot" => {
+                let l = evaluate_depth(&left, ctx, depth + 1);
+                let r = evaluate_depth(&right, ctx, depth + 1);
+                l != r
+            }
+            ">" => {
+                let l: f64 = evaluate_depth(&left, ctx, depth + 1).parse().unwrap_or(f64::NAN);
+                let r: f64 = evaluate_depth(&right, ctx, depth + 1).parse().unwrap_or(f64::NAN);
+                l > r
+            }
+            "<" => {
+                let l: f64 = evaluate_depth(&left, ctx, depth + 1).parse().unwrap_or(f64::NAN);
+                let r: f64 = evaluate_depth(&right, ctx, depth + 1).parse().unwrap_or(f64::NAN);
+                l < r
+            }
+            ">=" => {
+                let l: f64 = evaluate_depth(&left, ctx, depth + 1).parse().unwrap_or(f64::NAN);
+                let r: f64 = evaluate_depth(&right, ctx, depth + 1).parse().unwrap_or(f64::NAN);
+                l >= r
+            }
+            "<=" => {
+                let l: f64 = evaluate_depth(&left, ctx, depth + 1).parse().unwrap_or(f64::NAN);
+                let r: f64 = evaluate_depth(&right, ctx, depth + 1).parse().unwrap_or(f64::NAN);
+                l <= r
+            }
+            "vis" => {
+                let var_val = ctx.variables.get(&right).cloned().unwrap_or_default();
+                let l = evaluate_depth(&left, ctx, depth + 1);
+                var_val == l
+            }
+            "vnotis" | "visnot" => {
+                let var_val = ctx.variables.get(&right).cloned().unwrap_or_default();
+                let l = evaluate_depth(&left, ctx, depth + 1);
+                var_val != l
+            }
+            "tis" => {
+                let toggle_key = format!("toggle_{}", right);
+                let toggle_val = ctx.toggles.get(&toggle_key)
+                    .or_else(|| ctx.global_variables.get(&toggle_key))
+                    .cloned()
+                    .unwrap_or_default();
+                let l = evaluate_depth(&left, ctx, depth + 1);
+                toggle_val == l
+            }
+            "tnotis" | "tisnot" => {
+                let toggle_key = format!("toggle_{}", right);
+                let toggle_val = ctx.toggles.get(&toggle_key)
+                    .or_else(|| ctx.global_variables.get(&toggle_key))
+                    .cloned()
+                    .unwrap_or_default();
+                let l = evaluate_depth(&left, ctx, depth + 1);
+                toggle_val != l
+            }
+            _ => {
+                statement.push(left);
+                statement.push(op);
+                let r = evaluate_depth(&right, ctx, depth + 1);
+                return is_truthy(&r);
+            }
+        };
+        statement.push(if result { "1".to_string() } else { "0".to_string() });
+    }
+
+    if statement.len() == 2 {
+        let right = statement.pop().unwrap();
+        let op = statement.pop().unwrap();
+        let op_lower = op.to_lowercase();
+        match op_lower.as_str() {
+            "not" => {
+                let r = evaluate_depth(&right, ctx, depth + 1);
+                return !is_truthy(&r);
+            }
+            "var" => {
+                let var_val = ctx.variables.get(&right).cloned().unwrap_or_default();
+                return is_truthy(&var_val);
+            }
+            "toggle" => {
+                let toggle_key = format!("toggle_{}", right);
+                let toggle_val = ctx.toggles.get(&toggle_key)
+                    .or_else(|| ctx.global_variables.get(&toggle_key))
+                    .cloned()
+                    .unwrap_or_default();
+                return is_truthy(&toggle_val);
+            }
+            _ => {
+                let l = evaluate_depth(&op, ctx, depth + 1);
+                let r = evaluate_depth(&right, ctx, depth + 1);
+                return is_truthy(&l) || is_truthy(&r);
+            }
+        }
+    }
+
+    if statement.len() == 1 {
+        let val = evaluate_depth(&statement[0], ctx, depth + 1);
+        return is_truthy(&val);
+    }
+
+    false
+}
+
+fn split_else(body: &str) -> (&str, Option<&str>) {
+    if let Some(idx) = body.find("{{:else}}") {
+        let true_part = &body[..idx];
+        let false_part = &body[idx + 9..];
+        return (true_part, Some(false_part));
+    }
+
+    let lines: Vec<&str> = body.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        if line.trim() == "{{:else}}" {
+            let true_end = body.lines().take(i).map(|l| l.len() + 1).sum::<usize>();
+            let false_start = true_end + line.len() + 1;
+            if false_start <= body.len() {
+                return (&body[..true_end.saturating_sub(1)], Some(&body[false_start.min(body.len())..]));
+            }
+        }
+    }
+
+    (body, None)
+}
+
+fn evaluate_each_block(tag: &str, body: &str, ctx: &mut CbsContext, depth: usize) -> String {
+    let rest = if tag.contains("::") {
+        tag.splitn(2, "::").nth(1).unwrap_or("")
+    } else {
+        tag.splitn(2, ' ').nth(1).unwrap_or("")
+    };
+
+    let (array_str, var_name) = if let Some(as_idx) = rest.rfind(" as ") {
+        (&rest[..as_idx], rest[as_idx + 4..].trim())
+    } else if let Some(space_idx) = rest.rfind(' ') {
+        (&rest[..space_idx], rest[space_idx + 1..].trim())
+    } else {
+        (rest, "slot")
+    };
+
+    let array_str_eval = evaluate_depth(array_str.trim(), ctx, depth + 1);
+    let items = parse_array_for_each(&array_str_eval);
+
+    let slot_pattern = format!("{{{{slot::{}}}}}", var_name);
+    let mut result = String::new();
+    for item in &items {
+        let replaced = body.replace(&slot_pattern, item);
+        result.push_str(&evaluate_depth(&replaced, ctx, depth + 1));
+    }
+
+    trim_block_lines(&result, WsMode::Normal)
+}
+
+fn parse_array_for_each(s: &str) -> Vec<String> {
+    let trimmed = s.trim();
+    if trimmed.starts_with('[') {
+        if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(trimmed) {
+            return arr.into_iter().map(|v| match v {
+                serde_json::Value::String(s) => s,
+                other => other.to_string(),
+            }).collect();
+        }
+    }
+    trimmed.split('\u{00A7}').map(|s| s.to_string()).collect()
+}
+
+fn trim_block_lines(content: &str, mode: WsMode) -> String {
+    match mode {
+        WsMode::Keep => content.to_string(),
+        WsMode::Normal | WsMode::Legacy => {
+            let mut lines: Vec<&str> = content.lines().collect();
+            while lines.first().is_some_and(|l| l.trim().is_empty()) {
+                lines.remove(0);
+            }
+            while lines.last().is_some_and(|l| l.trim().is_empty()) {
+                lines.pop();
+            }
+            lines.join("\n")
+        }
+    }
 }
 
 fn normalize_func_name(name: &str) -> String {
@@ -439,6 +778,13 @@ fn is_truthy(s: &str) -> bool {
     s == "1" || s.eq_ignore_ascii_case("true")
 }
 
+fn utf8_char_len(first_byte: u8) -> usize {
+    if first_byte < 0x80 { 1 }
+    else if first_byte < 0xE0 { 2 }
+    else if first_byte < 0xF0 { 3 }
+    else { 4 }
+}
+
 fn eval_math(expr: &str) -> String {
     let tokens = tokenize_expr(expr);
     let rpn = to_rpn(&tokens);
@@ -680,5 +1026,151 @@ mod tests {
     fn math_negative() {
         let mut ctx = CbsContext::default();
         assert_eq!(evaluate("{{calc::-5 + 3}}", &mut ctx), "-2");
+    }
+
+    #[test]
+    fn when_true() {
+        let mut ctx = CbsContext::default();
+        assert_eq!(evaluate("{{#when 1}}yes{{/when}}", &mut ctx), "yes");
+    }
+
+    #[test]
+    fn when_false() {
+        let mut ctx = CbsContext::default();
+        assert_eq!(evaluate("{{#when 0}}yes{{/when}}", &mut ctx), "");
+    }
+
+    #[test]
+    fn when_else() {
+        let mut ctx = CbsContext::default();
+        assert_eq!(evaluate("{{#when 1}}yes{{:else}}no{{/when}}", &mut ctx), "yes");
+        assert_eq!(evaluate("{{#when 0}}yes{{:else}}no{{/when}}", &mut ctx), "no");
+    }
+
+    #[test]
+    fn when_not() {
+        let mut ctx = CbsContext::default();
+        assert_eq!(evaluate("{{#when::not::0}}yes{{/when}}", &mut ctx), "yes");
+        assert_eq!(evaluate("{{#when::not::1}}yes{{/when}}", &mut ctx), "");
+    }
+
+    #[test]
+    fn when_and_or() {
+        let mut ctx = CbsContext::default();
+        assert_eq!(evaluate("{{#when::1::and::1}}yes{{/when}}", &mut ctx), "yes");
+        assert_eq!(evaluate("{{#when::1::and::0}}yes{{/when}}", &mut ctx), "");
+        assert_eq!(evaluate("{{#when::0::or::1}}yes{{/when}}", &mut ctx), "yes");
+        assert_eq!(evaluate("{{#when::0::or::0}}yes{{/when}}", &mut ctx), "");
+    }
+
+    #[test]
+    fn when_is_isnot() {
+        let mut ctx = CbsContext::default();
+        assert_eq!(evaluate("{{#when::hello::is::hello}}yes{{/when}}", &mut ctx), "yes");
+        assert_eq!(evaluate("{{#when::hello::isnot::world}}yes{{/when}}", &mut ctx), "yes");
+        assert_eq!(evaluate("{{#when::hello::is::world}}yes{{/when}}", &mut ctx), "");
+    }
+
+    #[test]
+    fn when_comparison() {
+        let mut ctx = CbsContext::default();
+        assert_eq!(evaluate("{{#when::5::>::3}}yes{{/when}}", &mut ctx), "yes");
+        assert_eq!(evaluate("{{#when::3::<::5}}yes{{/when}}", &mut ctx), "yes");
+        assert_eq!(evaluate("{{#when::5::>=::5}}yes{{/when}}", &mut ctx), "yes");
+        assert_eq!(evaluate("{{#when::3::<=::5}}yes{{/when}}", &mut ctx), "yes");
+        assert_eq!(evaluate("{{#when::3::>::5}}yes{{/when}}", &mut ctx), "");
+    }
+
+    #[test]
+    fn when_var() {
+        let mut ctx = CbsContext::default();
+        ctx.variables.insert("flag".into(), "1".into());
+        assert_eq!(evaluate("{{#when::var::flag}}yes{{/when}}", &mut ctx), "yes");
+        ctx.variables.insert("flag".into(), "0".into());
+        assert_eq!(evaluate("{{#when::var::flag}}yes{{/when}}", &mut ctx), "");
+    }
+
+    #[test]
+    fn when_vis_vnotis() {
+        let mut ctx = CbsContext::default();
+        ctx.variables.insert("color".into(), "red".into());
+        assert_eq!(evaluate("{{#when::red::vis::color}}yes{{/when}}", &mut ctx), "yes");
+        assert_eq!(evaluate("{{#when::blue::vis::color}}yes{{/when}}", &mut ctx), "");
+        assert_eq!(evaluate("{{#when::blue::vnotis::color}}yes{{/when}}", &mut ctx), "yes");
+    }
+
+    #[test]
+    fn when_toggle() {
+        let mut ctx = CbsContext::default();
+        ctx.toggles.insert("toggle_dark".into(), "1".into());
+        assert_eq!(evaluate("{{#when::toggle::dark}}yes{{/when}}", &mut ctx), "yes");
+    }
+
+    #[test]
+    fn when_tis_tnotis() {
+        let mut ctx = CbsContext::default();
+        ctx.toggles.insert("toggle_theme".into(), "dark".into());
+        assert_eq!(evaluate("{{#when::dark::tis::theme}}yes{{/when}}", &mut ctx), "yes");
+        assert_eq!(evaluate("{{#when::light::tnotis::theme}}yes{{/when}}", &mut ctx), "yes");
+    }
+
+    #[test]
+    fn when_keep_whitespace() {
+        let mut ctx = CbsContext::default();
+        let input = "{{#when::keep::1}}\n  hello\n  world\n{{/when}}";
+        assert_eq!(evaluate(input, &mut ctx), "\n  hello\n  world\n");
+    }
+
+    #[test]
+    fn when_nested() {
+        let mut ctx = CbsContext::default();
+        let input = "{{#when 1}}outer{{#when 1}}inner{{/when}}{{/when}}";
+        assert_eq!(evaluate(input, &mut ctx), "outerinner");
+    }
+
+    #[test]
+    fn when_with_cbs_functions() {
+        let mut ctx = CbsContext::default();
+        ctx.char_name = "Alice".into();
+        assert_eq!(
+            evaluate("{{#when 1}}Hello {{char}}!{{/when}}", &mut ctx),
+            "Hello Alice!"
+        );
+    }
+
+    #[test]
+    fn if_deprecated() {
+        let mut ctx = CbsContext::default();
+        assert_eq!(evaluate("{{#if 1}}yes{{/if}}", &mut ctx), "yes");
+        assert_eq!(evaluate("{{#if 0}}yes{{/if}}", &mut ctx), "");
+    }
+
+    #[test]
+    fn puredisplay() {
+        let mut ctx = CbsContext::default();
+        let result = evaluate("{{#puredisplay}}{{char}} hello{{/puredisplay}}", &mut ctx);
+        assert_eq!(result, "\\{\\{char\\}\\} hello");
+    }
+
+    #[test]
+    fn each_array() {
+        let mut ctx = CbsContext::default();
+        let input = r#"{{#each ["a","b","c"] as item}}[{{slot::item}}]{{/each}}"#;
+        assert_eq!(evaluate(input, &mut ctx), "[a][b][c]");
+    }
+
+    #[test]
+    fn each_separator() {
+        let mut ctx = CbsContext::default();
+        let input = "{{#each x\u{00A7}y\u{00A7}z as v}}({{slot::v}}){{/each}}";
+        assert_eq!(evaluate(input, &mut ctx), "(x)(y)(z)");
+    }
+
+    #[test]
+    fn when_else_multiline() {
+        let mut ctx = CbsContext::default();
+        let input = "{{#when 0}}\ntrue content\n{{:else}}\nfalse content\n{{/when}}";
+        let result = evaluate(input, &mut ctx);
+        assert_eq!(result, "false content");
     }
 }

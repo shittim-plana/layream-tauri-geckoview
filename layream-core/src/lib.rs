@@ -4,6 +4,7 @@ pub mod crypto;
 pub mod error;
 pub mod gca;
 pub mod hypa;
+pub mod mistral;
 pub mod preset;
 pub mod regex;
 pub mod rpack;

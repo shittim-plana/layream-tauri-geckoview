@@ -5,6 +5,7 @@ use crate::error::LayreamError;
 use crate::vertex_api::{GenerateRequest, StreamChunk};
 
 const GCA_BASE: &str = "https://cloudcode-pa.googleapis.com/v1internal";
+pub const GCA_OAUTH_CLIENT_ID: &str = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
 
 pub const GCA_MODELS: &[&str] = &[
     "gemini-2.5-flash",

@@ -279,6 +279,117 @@ pub async fn list_models(
     Ok(models)
 }
 
+pub async fn embed_content(
+    client: &reqwest::Client,
+    access_token: &str,
+    project_id: &str,
+    region: &str,
+    model: &str,
+    text: &str,
+) -> Result<Vec<f64>, LayreamError> {
+    let host = if region == "global" {
+        "aiplatform.googleapis.com".to_string()
+    } else {
+        format!("{}-aiplatform.googleapis.com", region)
+    };
+    let url = format!(
+        "https://{}/v1/projects/{}/locations/{}/publishers/google/models/{}:embedContent",
+        host, project_id, region, model
+    );
+
+    let body = serde_json::json!({
+        "content": {
+            "parts": [{ "text": text }]
+        }
+    });
+
+    let resp = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| LayreamError::Http(e.to_string()))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(LayreamError::ApiError { status, body });
+    }
+
+    let resp_body: Value = resp
+        .json()
+        .await
+        .map_err(|e| LayreamError::Http(e.to_string()))?;
+
+    let values = resp_body
+        .get("embedding")
+        .and_then(|e| e.get("values"))
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| LayreamError::Http("missing embedding.values".into()))?;
+
+    Ok(values.iter().filter_map(|v| v.as_f64()).collect())
+}
+
+pub async fn batch_embed_contents(
+    client: &reqwest::Client,
+    access_token: &str,
+    project_id: &str,
+    region: &str,
+    model: &str,
+    texts: &[&str],
+) -> Result<Vec<Vec<f64>>, LayreamError> {
+    let host = if region == "global" {
+        "aiplatform.googleapis.com".to_string()
+    } else {
+        format!("{}-aiplatform.googleapis.com", region)
+    };
+    let url = format!(
+        "https://{}/v1/projects/{}/locations/{}/publishers/google/models/{}:batchEmbedContents",
+        host, project_id, region, model
+    );
+
+    let requests: Vec<Value> = texts
+        .iter()
+        .map(|t| serde_json::json!({
+            "model": format!("models/{}", model),
+            "content": { "parts": [{ "text": t }] }
+        }))
+        .collect();
+
+    let body = serde_json::json!({ "requests": requests });
+
+    let resp = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| LayreamError::Http(e.to_string()))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(LayreamError::ApiError { status, body });
+    }
+
+    let resp_body: Value = resp
+        .json()
+        .await
+        .map_err(|e| LayreamError::Http(e.to_string()))?;
+
+    let mut embeddings = Vec::new();
+    if let Some(arr) = resp_body.get("embeddings").and_then(|e| e.as_array()) {
+        for entry in arr {
+            if let Some(values) = entry.get("values").and_then(|v| v.as_array()) {
+                embeddings.push(values.iter().filter_map(|v| v.as_f64()).collect());
+            }
+        }
+    }
+
+    Ok(embeddings)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

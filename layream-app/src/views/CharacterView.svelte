@@ -86,6 +86,7 @@
       <button class="tab-btn" class:active={subTab === "info"} onclick={() => subTab = "info"}>Info</button>
       <button class="tab-btn" class:active={subTab === "lorebook"} onclick={() => subTab = "lorebook"}>Lorebook</button>
       <button class="tab-btn" class:active={subTab === "assets"} onclick={() => subTab = "assets"}>Assets</button>
+      <button class="tab-btn" class:active={subTab === "module"} onclick={() => subTab = "module"}>Module</button>
     </div>
 
     <!-- Info Tab -->
@@ -201,10 +202,13 @@
           {/if}
         </div>
       </div>
+    {/if}
 
+    <!-- Module Tab -->
+    {#if subTab === "module"}
       {#if character.hasModule}
         <div class="card">
-          <div class="card-header"><span class="card-title">.risum Module</span></div>
+          <div class="card-header"><span class="card-title">.risum Module (embedded)</span></div>
           <div class="card-body">
             <p style="color: var(--accent); font-size: 13px;">Module data detected in character file.</p>
           </div>
@@ -215,7 +219,7 @@
         <div class="card-header"><span class="card-title">Load .risum Module</span></div>
         <div class="card-body">
           <FileImport
-            accept="application/octet-stream"
+            accept="application/octet-stream,application/json"
             label=".risum 모듈 불러오기"
             extensions=".risum"
             onfile={handleModuleFile}

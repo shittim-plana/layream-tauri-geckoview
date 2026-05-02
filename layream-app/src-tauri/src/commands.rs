@@ -63,3 +63,12 @@ pub fn oauth_start(_project_id: String, _region: String) -> Result<String, Strin
 pub fn oauth_status() -> String {
     "Not connected".into()
 }
+
+#[tauri::command]
+pub async fn mistral_list_models(api_key: String) -> Result<Value, String> {
+    let client = reqwest::Client::new();
+    let models = layream_core::mistral::list_models(&client, &api_key)
+        .await
+        .map_err(|e| e.to_string())?;
+    serde_json::to_value(&models).map_err(|e| e.to_string())
+}

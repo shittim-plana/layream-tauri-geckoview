@@ -8,6 +8,8 @@
   let voyageKey = $state("");
   let mistralKey = $state("");
   let mistralModel = $state("mistral-small-2603");
+  let mistralModels = $state([]);
+  let fetchingMistral = $state(false);
 
   const vertexModels = [
     "gemini-2.5-flash",
@@ -29,6 +31,16 @@
     "gemini-3.1-flash-lite-preview",
     "gemini-3.1-pro",
     "gemini-3.1-pro-preview",
+  ];
+
+  const defaultMistralModels = [
+    "mistral-small-2603",
+    "mistral-medium-2508",
+    "magistral-medium-2509",
+    "mistral-large-latest",
+    "codestral-2508",
+    "ministral-3-8b-2512",
+    "labs-devstral-2512",
   ];
 
   const regions = [
@@ -60,6 +72,25 @@
       authStatus = `Error: ${e}`;
     }
   }
+
+  async function fetchMistralModels() {
+    if (!mistralKey) return;
+    fetchingMistral = true;
+    try {
+      const result = await invoke("mistral_list_models", { apiKey: mistralKey });
+      if (result?.length) {
+        mistralModels = result.map((m) => m.id).sort();
+      }
+    } catch (e) {
+      console.warn("Failed to fetch Mistral models:", e);
+    }
+    fetchingMistral = false;
+  }
+
+  function mistralSuggestions() {
+    if (mistralModels.length > 0) return mistralModels;
+    return defaultMistralModels;
+  }
 </script>
 
 <div>
@@ -71,26 +102,29 @@
     </div>
     <div class="field">
       <label>Region</label>
-      <select bind:value={region}>
+      <input type="text" list="region-list" bind:value={region} placeholder="us-central1" />
+      <datalist id="region-list">
         {#each regions as r}
-          <option value={r}>{r}</option>
+          <option value={r}></option>
         {/each}
-      </select>
+      </datalist>
     </div>
     <div class="field">
       <label>Model</label>
-      <select bind:value={model}>
-        <optgroup label="Vertex AI">
-          {#each vertexModels as m}
-            <option value={m}>{m}</option>
-          {/each}
-        </optgroup>
-        <optgroup label="GCA (Gemini Code Assistant)">
-          {#each gcaModels as m}
-            <option value={`gca:${m}`}>{m}</option>
-          {/each}
-        </optgroup>
-      </select>
+      <input type="text" list="vertex-model-list" bind:value={model} placeholder="gemini-2.5-flash" />
+      <datalist id="vertex-model-list">
+        <option value="" disabled>— Vertex AI —</option>
+        {#each vertexModels as m}
+          <option value={m}></option>
+        {/each}
+        <option value="" disabled>— GCA —</option>
+        {#each gcaModels as m}
+          <option value={`gca:${m}`}>{m} (GCA)</option>
+        {/each}
+      </datalist>
+      <p style="font-size: 11px; color: var(--text-dim); margin-top: 4px;">
+        Select from list or type custom model ID. Prefix with gca: for GCA endpoint.
+      </p>
     </div>
     <div style="display: flex; gap: 8px;">
       <button onclick={startAuth}>Connect</button>
@@ -107,11 +141,29 @@
     </div>
     <div class="field">
       <label>Model</label>
-      <input type="text" bind:value={mistralModel} placeholder="mistral-small-2603" />
+      <div style="display: flex; gap: 8px;">
+        <input
+          type="text"
+          list="mistral-model-list"
+          bind:value={mistralModel}
+          placeholder="mistral-small-2603"
+          style="flex: 1;"
+        />
+        <button onclick={fetchMistralModels} disabled={!mistralKey || fetchingMistral} style="white-space: nowrap;">
+          {fetchingMistral ? "..." : "Fetch"}
+        </button>
+      </div>
+      <datalist id="mistral-model-list">
+        {#each mistralSuggestions() as m}
+          <option value={m}></option>
+        {/each}
+      </datalist>
+      <p style="font-size: 11px; color: var(--text-dim); margin-top: 4px;">
+        Select from list or type custom model ID. Click Fetch to load latest from API.
+      </p>
     </div>
     <p style="font-size: 12px; color: var(--text-dim);">
       Free experiment plan available (opt-out).
-      Use /v1/models to fetch latest model list.
     </p>
   </div>
 

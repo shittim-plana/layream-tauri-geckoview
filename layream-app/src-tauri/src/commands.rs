@@ -177,11 +177,10 @@ pub fn gca_oauth_status(state: State<'_, AuthState>) -> Value {
 
 #[tauri::command]
 pub async fn vertex_list_projects(state: State<'_, AuthState>) -> Result<Value, String> {
-    let tokens = state.vertex_tokens.lock().unwrap();
-    let token = tokens.as_ref()
-        .ok_or("Not connected")?
-        .access_token.clone();
-    drop(tokens);
+    let token = {
+        let tokens = state.vertex_tokens.lock().unwrap();
+        tokens.as_ref().ok_or("Not connected")?.access_token.clone()
+    };
     let client = reqwest::Client::new();
     let projects = layream_core::vertex_auth::list_gcp_projects(&client, &token)
         .await

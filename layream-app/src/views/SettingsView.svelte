@@ -10,6 +10,8 @@
   let mistralModel = $state("mistral-small-2603");
   let mistralModels = $state([]);
   let fetchingMistral = $state(false);
+  let vertexFetchedModels = $state([]);
+  let fetchingVertex = $state(false);
 
   const vertexModels = [
     "gemini-2.5-flash",
@@ -73,6 +75,24 @@
     }
   }
 
+  async function fetchVertexModels() {
+    fetchingVertex = true;
+    try {
+      const result = await invoke("vertex_list_models", { accessToken: "", region });
+      if (result?.length) {
+        vertexFetchedModels = result;
+      }
+    } catch (e) {
+      console.warn("Failed to fetch Vertex models:", e);
+    }
+    fetchingVertex = false;
+  }
+
+  function vertexSuggestions() {
+    if (vertexFetchedModels.length > 0) return vertexFetchedModels;
+    return [...vertexModels, ...gcaModels.map((m) => `gca:${m}`)];
+  }
+
   async function fetchMistralModels() {
     if (!mistralKey) return;
     fetchingMistral = true;
@@ -111,15 +131,21 @@
     </div>
     <div class="field">
       <label>Model</label>
-      <input type="text" list="vertex-model-list" bind:value={model} placeholder="gemini-2.5-flash" />
+      <div style="display: flex; gap: 8px;">
+        <input
+          type="text"
+          list="vertex-model-list"
+          bind:value={model}
+          placeholder="gemini-2.5-flash"
+          style="flex: 1;"
+        />
+        <button onclick={fetchVertexModels} disabled={fetchingVertex} style="white-space: nowrap;">
+          {fetchingVertex ? "..." : "Fetch"}
+        </button>
+      </div>
       <datalist id="vertex-model-list">
-        <option value="" disabled>— Vertex AI —</option>
-        {#each vertexModels as m}
+        {#each vertexSuggestions() as m}
           <option value={m}></option>
-        {/each}
-        <option value="" disabled>— GCA —</option>
-        {#each gcaModels as m}
-          <option value={`gca:${m}`}>{m} (GCA)</option>
         {/each}
       </datalist>
       <p style="font-size: 11px; color: var(--text-dim); margin-top: 4px;">

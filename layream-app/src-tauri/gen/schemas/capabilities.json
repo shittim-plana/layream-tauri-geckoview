@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default capabilities for Layream","local":true,"windows":["main"],"permissions":["core:default","fs:default","fs:allow-read-file","fs:allow-write-file","shell:allow-open","log:default"]}}
+{"default":{"identifier":"default","description":"Default capabilities for Layream","local":true,"windows":["main"],"permissions":["core:default","fs:default","fs:allow-read-file","fs:allow-write-file","shell:allow-open","dialog:default","log:default"]}}

@@ -1,9 +1,11 @@
 <script>
   import { invoke } from "../lib/tauri.js";
 
+  let provider = $state("vertex");
   let projectId = $state("");
   let region = $state("us-central1");
-  let model = $state("gemini-2.5-flash");
+  let vertexModel = $state("gemini-2.5-flash");
+  let gcaModel = $state("gemini-2.5-flash");
   let authStatus = $state("Not connected");
   let voyageKey = $state("");
   let mistralKey = $state("");
@@ -17,11 +19,13 @@
     "gemini-2.5-flash",
     "gemini-2.5-pro",
     "gemini-3.0-flash-preview",
-    "gemini-3.0-pro-preview",
     "gemini-3.1-flash-lite-preview",
     "gemini-3.1-pro-preview",
-    "gemma-4-31b-it",
-    "gemma-4-26b-a4b-it",
+  ];
+
+  const vertexEmbeddingModels = [
+    "gemini-embedding-001",
+    "gemini-embedding-2",
   ];
 
   const gcaModels = [
@@ -90,7 +94,7 @@
 
   function vertexSuggestions() {
     if (vertexFetchedModels.length > 0) return vertexFetchedModels;
-    return [...vertexModels, ...gcaModels.map((m) => `gca:${m}`)];
+    return vertexModels;
   }
 
   async function fetchMistralModels() {
@@ -115,6 +119,15 @@
 
 <div>
   <div class="card">
+    <h3 style="margin-bottom: 12px;">API Provider</h3>
+    <div class="provider-tabs">
+      <button class:active={provider === "vertex"} onclick={() => provider = "vertex"}>Vertex AI</button>
+      <button class:active={provider === "gca"} onclick={() => provider = "gca"}>GCA</button>
+    </div>
+  </div>
+
+  {#if provider === "vertex"}
+  <div class="card">
     <h3 style="margin-bottom: 12px;">Vertex AI OAuth</h3>
     <div class="field">
       <label>Project ID</label>
@@ -122,35 +135,25 @@
     </div>
     <div class="field">
       <label>Region</label>
-      <input type="text" list="region-list" bind:value={region} placeholder="us-central1" />
-      <datalist id="region-list">
+      <select bind:value={region}>
         {#each regions as r}
-          <option value={r}></option>
+          <option value={r}>{r}</option>
         {/each}
-      </datalist>
+      </select>
     </div>
     <div class="field">
       <label>Model</label>
       <div style="display: flex; gap: 8px;">
-        <input
-          type="text"
-          list="vertex-model-list"
-          bind:value={model}
-          placeholder="gemini-2.5-flash"
-          style="flex: 1;"
-        />
+        <select bind:value={vertexModel} style="flex: 1;">
+          {#each vertexSuggestions() as m}
+            <option value={m}>{m}</option>
+          {/each}
+        </select>
         <button onclick={fetchVertexModels} disabled={fetchingVertex} style="white-space: nowrap;">
           {fetchingVertex ? "..." : "Fetch"}
         </button>
       </div>
-      <datalist id="vertex-model-list">
-        {#each vertexSuggestions() as m}
-          <option value={m}></option>
-        {/each}
-      </datalist>
-      <p style="font-size: 11px; color: var(--text-dim); margin-top: 4px;">
-        Select from list or type custom model ID. Prefix with gca: for GCA endpoint.
-      </p>
+      <input type="text" bind:value={vertexModel} placeholder="or type custom model ID" style="margin-top: 6px; font-size: 12px;" />
     </div>
     <div style="display: flex; gap: 8px;">
       <button onclick={startAuth}>Connect</button>
@@ -158,6 +161,27 @@
     </div>
     <p style="margin-top: 8px; font-size: 13px; color: var(--text-dim);">{authStatus}</p>
   </div>
+  {/if}
+
+  {#if provider === "gca"}
+  <div class="card">
+    <h3 style="margin-bottom: 12px;">GCA (Gemini Code Assistant)</h3>
+    <div class="field">
+      <label>Model</label>
+      <select bind:value={gcaModel} style="width: 100%;">
+        {#each gcaModels as m}
+          <option value={m}>{m}</option>
+        {/each}
+      </select>
+      <input type="text" bind:value={gcaModel} placeholder="or type custom model ID" style="margin-top: 6px; font-size: 12px;" />
+    </div>
+    <div style="display: flex; gap: 8px;">
+      <button onclick={startAuth}>Connect</button>
+      <button onclick={checkAuth}>Check Status</button>
+    </div>
+    <p style="margin-top: 8px; font-size: 13px; color: var(--text-dim);">{authStatus}</p>
+  </div>
+  {/if}
 
   <div class="card">
     <h3 style="margin-bottom: 12px;">Mistral AI</h3>
@@ -168,25 +192,16 @@
     <div class="field">
       <label>Model</label>
       <div style="display: flex; gap: 8px;">
-        <input
-          type="text"
-          list="mistral-model-list"
-          bind:value={mistralModel}
-          placeholder="mistral-small-2603"
-          style="flex: 1;"
-        />
+        <select bind:value={mistralModel} style="flex: 1;">
+          {#each mistralSuggestions() as m}
+            <option value={m}>{m}</option>
+          {/each}
+        </select>
         <button onclick={fetchMistralModels} disabled={!mistralKey || fetchingMistral} style="white-space: nowrap;">
           {fetchingMistral ? "..." : "Fetch"}
         </button>
       </div>
-      <datalist id="mistral-model-list">
-        {#each mistralSuggestions() as m}
-          <option value={m}></option>
-        {/each}
-      </datalist>
-      <p style="font-size: 11px; color: var(--text-dim); margin-top: 4px;">
-        Select from list or type custom model ID. Click Fetch to load latest from API.
-      </p>
+      <input type="text" bind:value={mistralModel} placeholder="or type custom model ID" style="margin-top: 6px; font-size: 12px;" />
     </div>
     <p style="font-size: 12px; color: var(--text-dim);">
       Free experiment plan available (opt-out).
@@ -213,3 +228,34 @@
     </p>
   </div>
 </div>
+
+<style>
+  .provider-tabs {
+    display: flex;
+    gap: 4px;
+  }
+  .provider-tabs button {
+    flex: 1;
+    padding: 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .provider-tabs button.active {
+    background: var(--accent);
+    color: var(--text);
+    border-color: var(--accent);
+  }
+  select {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg-input);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 14px;
+    appearance: auto;
+  }
+</style>

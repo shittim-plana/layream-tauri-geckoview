@@ -23,7 +23,14 @@
   const PROMPT_TYPES = ["plain", "jailbreak", "cot", "chat", "description", "persona", "lorebook", "authornote", "memory", "postEverything", "cache"];
   const ROLES = ["system", "user", "bot"];
 
+  const PRESET_EXTS = [".risup", ".risupreset", ".json", ".preset"];
+
   async function handleFile(name, data) {
+    const ext = "." + name.split(".").pop()?.toLowerCase();
+    if (!PRESET_EXTS.includes(ext)) {
+      error = `지원하지 않는 형식: ${ext} (${PRESET_EXTS.join(", ")} 만 가능)`;
+      return;
+    }
     loading = true;
     error = "";
     try {

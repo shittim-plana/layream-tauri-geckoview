@@ -31,8 +31,16 @@
             debugMsg = `read ${bytes.length} bytes`;
 
             const name = String(path).split("/").pop() || "file";
-            onfile?.(name, Array.from(bytes));
-            debugMsg = `sent ${bytes.length} bytes as "${name}"`;
+            if (typeof onfile === "function") {
+              try {
+                await onfile(name, Array.from(bytes));
+                debugMsg = `onfile OK: ${name} (${bytes.length}b)`;
+              } catch (invokeErr) {
+                debugMsg = `onfile THREW: ${invokeErr}`;
+              }
+            } else {
+              debugMsg = `ERROR: onfile not a function (${typeof onfile})`;
+            }
           } else {
             debugMsg = "cancelled";
           }
@@ -67,9 +75,17 @@
             });
             debugMsg = `read ${buf.byteLength} bytes, converting...`;
             const data = Array.from(new Uint8Array(buf));
-            debugMsg = `converted ${data.length} items, calling onfile...`;
-            onfile?.(file.name, data);
-            debugMsg = `done: ${file.name}`;
+            debugMsg = `converted ${data.length} items, onfile=${typeof onfile}`;
+            if (typeof onfile === "function") {
+              try {
+                await onfile(file.name, data);
+                debugMsg = `onfile OK: ${file.name}`;
+              } catch (invokeErr) {
+                debugMsg = `onfile THREW: ${invokeErr}`;
+              }
+            } else {
+              debugMsg = `ERROR: onfile is NOT a function (${typeof onfile})`;
+            }
           } catch (err) {
             debugMsg = `read error: ${err}`;
           }

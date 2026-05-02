@@ -125,10 +125,19 @@
     } catch (e) { vertexStatus = { connected: false, error: String(e) }; }
   }
 
+  async function openExternal(url) {
+    try {
+      const { open } = await import("@tauri-apps/plugin-shell");
+      await open(url);
+    } catch {
+      window.location.href = url;
+    }
+  }
+
   async function startVertexAuth() {
     try {
       const url = await invoke("vertex_oauth_start");
-      if (url) window.open(url, "_blank");
+      if (url) await openExternal(url);
     } catch (e) { console.error("Vertex auth error:", e); }
   }
 
@@ -155,7 +164,7 @@
   async function startGcaAuth() {
     try {
       const url = await invoke("gca_oauth_start");
-      if (url) window.open(url, "_blank");
+      if (url) await openExternal(url);
     } catch (e) { console.error("GCA auth error:", e); }
   }
 

@@ -10,14 +10,20 @@ pub fn run() {
         )
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_deep_link::init())
+        .manage(commands::AuthState::default())
         .invoke_handler(tauri::generate_handler![
             commands::load_preset,
             commands::export_preset,
             commands::load_character,
             commands::evaluate_cbs,
             commands::chat_send,
-            commands::oauth_start,
-            commands::oauth_status,
+            commands::vertex_oauth_start,
+            commands::vertex_oauth_callback,
+            commands::vertex_oauth_status,
+            commands::gca_oauth_start,
+            commands::gca_oauth_callback,
+            commands::gca_oauth_status,
             commands::mistral_list_models,
             commands::vertex_list_models,
         ])

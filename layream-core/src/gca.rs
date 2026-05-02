@@ -8,14 +8,13 @@ const GCA_BASE: &str = "https://cloudcode-pa.googleapis.com/v1internal";
 pub const GCA_OAUTH_CLIENT_ID: &str = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
 
 pub const GCA_MODELS: &[&str] = &[
+    "gemini-3.1-pro-preview",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-2.5-pro",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
-    "gemini-2.5-pro",
-    "gemini-3-flash-preview",
-    "gemini-3-pro-preview",
-    "gemini-3.1-flash-lite-preview",
-    "gemini-3.1-pro",
-    "gemini-3.1-pro-preview",
 ];
 
 pub fn build_endpoint(model: &str) -> String {
@@ -150,6 +149,6 @@ mod tests {
     fn model_list_not_empty() {
         assert!(!GCA_MODELS.is_empty());
         assert!(GCA_MODELS.contains(&"gemini-2.5-flash"));
-        assert!(GCA_MODELS.contains(&"gemini-3.1-pro-preview"));
+        assert!(GCA_MODELS.contains(&"gemini-3-pro-preview"));
     }
 }

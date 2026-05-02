@@ -3,3 +3,4 @@
 **/dist/
 *.apk
 *.aab
+.claude/

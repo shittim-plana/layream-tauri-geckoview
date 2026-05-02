@@ -98,10 +98,14 @@
   }
 
   function handleChatKeydown(e) {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !isMobile()) {
       e.preventDefault();
       sendMessage();
     }
+  }
+
+  function isMobile() {
+    return /Android|iPhone|iPad/i.test(navigator.userAgent);
   }
 
   function clearChat() { messages = []; }
@@ -155,16 +159,27 @@
     URL.revokeObjectURL(url);
   }
 
+  let hypaImportStatus = $state("");
+
   async function importHypa(file) {
+    hypaImportStatus = `importing ${file.name}...`;
     try {
-      const text = await file.text();
+      const text = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result);
+        reader.onerror = () => rej(reader.error);
+        reader.readAsText(file);
+      });
       const data = JSON.parse(text);
       if (data?.summaries) {
         hypaSummaries = data.summaries;
         hypaMemoryCount = hypaSummaries.length;
         await saveHypa();
+        hypaImportStatus = `imported ${hypaSummaries.length} summaries`;
+      } else {
+        hypaImportStatus = `no "summaries" key in JSON`;
       }
-    } catch (e) { console.error("HyPA import failed:", e); }
+    } catch (e) { hypaImportStatus = `import error: ${e}`; }
   }
 
   function clearHypa() {
@@ -387,6 +402,9 @@
             </button>
             <button class="btn btn-sm btn-danger" onclick={clearHypa}>Clear All</button>
           </div>
+          {#if hypaImportStatus}
+            <p style="font-size: 11px; color: var(--orange); margin-top: 8px;">{hypaImportStatus}</p>
+          {/if}
         {/if}
       </div>
     </div>

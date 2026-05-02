@@ -14,6 +14,12 @@
   }
 
   async function handleFile(name, data) {
+    const CHAR_EXTS = [".charx", ".png", ".jpeg", ".jpg", ".json"];
+    const ext = "." + name.split(".").pop()?.toLowerCase();
+    if (!CHAR_EXTS.includes(ext)) {
+      error = `지원하지 않는 형식: ${ext} (${CHAR_EXTS.join(", ")} 만 가능)`;
+      return;
+    }
     loading = true;
     error = "";
     try {

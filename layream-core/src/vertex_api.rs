@@ -13,6 +13,15 @@ pub struct GenerateRequest {
     pub safety_settings: Vec<SafetySetting>,
     #[serde(rename = "generationConfig")]
     pub generation_config: GenerationConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<VertexTool>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VertexTool {
+    GoogleSearch(serde_json::Map<String, Value>),
+    CodeExecution(serde_json::Map<String, Value>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -24,6 +24,9 @@ pub fn run() {
             commands::gca_oauth_start,
             commands::gca_oauth_callback,
             commands::gca_oauth_status,
+            commands::gca_oauth_disconnect,
+            commands::vertex_list_projects,
+            commands::vertex_oauth_disconnect,
             commands::mistral_list_models,
             commands::vertex_list_models,
         ])

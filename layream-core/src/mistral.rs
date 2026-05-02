@@ -19,8 +19,6 @@ pub struct ChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub safe_prompt: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub frequency_penalty: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub presence_penalty: Option<f64>,
@@ -255,7 +253,6 @@ mod tests {
             top_p: None,
             max_tokens: Some(1024),
             stream: None,
-            safe_prompt: Some(false),
             frequency_penalty: Some(0.5),
             presence_penalty: None,
             stop: Some(vec!["</s>".into()]),
@@ -267,7 +264,6 @@ mod tests {
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("mistral-medium-2508"));
-        assert!(json.contains("\"safe_prompt\":false"));
         assert!(json.contains("\"frequency_penalty\":0.5"));
         assert!(json.contains("</s>"));
         assert!(!json.contains("top_p"));
@@ -289,7 +285,6 @@ mod tests {
             top_p: None,
             max_tokens: None,
             stream: None,
-            safe_prompt: None,
             frequency_penalty: None,
             presence_penalty: None,
             stop: None,

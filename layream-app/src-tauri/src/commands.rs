@@ -176,6 +176,34 @@ pub fn gca_oauth_status(state: State<'_, AuthState>) -> Value {
 }
 
 #[tauri::command]
+pub async fn vertex_list_projects(state: State<'_, AuthState>) -> Result<Value, String> {
+    let tokens = state.vertex_tokens.lock().unwrap();
+    let token = tokens.as_ref()
+        .ok_or("Not connected")?
+        .access_token.clone();
+    drop(tokens);
+    let client = reqwest::Client::new();
+    let projects = layream_core::vertex_auth::list_gcp_projects(&client, &token)
+        .await
+        .map_err(|e| e.to_string())?;
+    serde_json::to_value(&projects).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn vertex_oauth_disconnect(state: State<'_, AuthState>) -> String {
+    *state.vertex_tokens.lock().unwrap() = None;
+    *state.vertex_pkce.lock().unwrap() = None;
+    "Disconnected".into()
+}
+
+#[tauri::command]
+pub fn gca_oauth_disconnect(state: State<'_, AuthState>) -> String {
+    *state.gca_tokens.lock().unwrap() = None;
+    *state.gca_pkce.lock().unwrap() = None;
+    "Disconnected".into()
+}
+
+#[tauri::command]
 pub async fn mistral_list_models(api_key: String) -> Result<Value, String> {
     let client = reqwest::Client::new();
     let models = layream_core::mistral::list_models(&client, &api_key)

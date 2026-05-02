@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Sha256, Digest};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -217,6 +218,56 @@ fn to_tokens(resp: TokenResponse) -> Tokens {
         refresh_token: resp.refresh_token,
         expires_at: now + resp.expires_in,
     }
+}
+
+const GCP_PROJECTS_ENDPOINT: &str = "https://cloudresourcemanager.googleapis.com/v1/projects";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GcpProject {
+    #[serde(rename = "projectId")]
+    pub project_id: String,
+    pub name: String,
+}
+
+pub async fn list_gcp_projects(
+    client: &reqwest::Client,
+    access_token: &str,
+) -> Result<Vec<GcpProject>, LayreamError> {
+    let url = format!("{}?filter=lifecycleState:ACTIVE", GCP_PROJECTS_ENDPOINT);
+    let resp = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()
+        .await
+        .map_err(|e| LayreamError::Http(e.to_string()))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(LayreamError::ApiError { status, body });
+    }
+
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| LayreamError::Http(e.to_string()))?;
+
+    let projects = body
+        .get("projects")
+        .and_then(|p| p.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|p| {
+                    Some(GcpProject {
+                        project_id: p.get("projectId")?.as_str()?.to_string(),
+                        name: p.get("name")?.as_str()?.to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(projects)
 }
 
 fn urlencoded(s: &str) -> String {

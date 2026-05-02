@@ -19,6 +19,7 @@ pub fn run() {
             commands::oauth_start,
             commands::oauth_status,
             commands::mistral_list_models,
+            commands::vertex_list_models,
         ])
         .run(tauri::generate_context!());
 

@@ -228,6 +228,57 @@ pub async fn generate_non_streaming(
     Ok(text)
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct VertexModelInfo {
+    pub name: String,
+    #[serde(rename = "displayName")]
+    pub display_name: Option<String>,
+    pub description: Option<String>,
+}
+
+pub async fn list_models(
+    client: &reqwest::Client,
+    access_token: &str,
+    region: &str,
+) -> Result<Vec<String>, LayreamError> {
+    let host = if region == "global" {
+        "aiplatform.googleapis.com".to_string()
+    } else {
+        format!("{}-aiplatform.googleapis.com", region)
+    };
+    let url = format!("https://{}/v1/publishers/google/models", host);
+
+    let resp = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()
+        .await
+        .map_err(|e| LayreamError::Http(e.to_string()))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(LayreamError::ApiError { status, body });
+    }
+
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| LayreamError::Http(e.to_string()))?;
+
+    let mut models = Vec::new();
+    if let Some(arr) = body.get("models").and_then(|m| m.as_array()) {
+        for entry in arr {
+            if let Some(name) = entry.get("name").and_then(|n| n.as_str()) {
+                let model_id = name.strip_prefix("publishers/google/models/").unwrap_or(name);
+                models.push(model_id.to_string());
+            }
+        }
+    }
+    models.sort();
+    Ok(models)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

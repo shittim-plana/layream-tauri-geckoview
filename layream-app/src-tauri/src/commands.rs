@@ -72,3 +72,12 @@ pub async fn mistral_list_models(api_key: String) -> Result<Value, String> {
         .map_err(|e| e.to_string())?;
     serde_json::to_value(&models).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn vertex_list_models(access_token: String, region: String) -> Result<Value, String> {
+    let client = reqwest::Client::new();
+    let models = layream_core::vertex_api::list_models(&client, &access_token, &region)
+        .await
+        .map_err(|e| e.to_string())?;
+    serde_json::to_value(&models).map_err(|e| e.to_string())
+}

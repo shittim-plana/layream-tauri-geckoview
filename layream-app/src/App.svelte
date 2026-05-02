@@ -51,32 +51,20 @@
   }
 
   const tabs = [
-    { id: "preset", label: "Preset" },
-    { id: "character", label: "Character" },
-    { id: "test", label: "Test" },
-    { id: "settings", label: "Settings" },
+    { id: "preset", label: "Preset", icon: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
+    { id: "character", label: "Character", icon: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" },
+    { id: "test", label: "Test", icon: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" },
+    { id: "settings", label: "Settings", icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z" },
   ];
 </script>
 
 <div class="header">
   <h1 style="font-size: 18px; font-weight: 600;">Layream</h1>
-  <span style="font-size: 12px; color: var(--text-dim);">v0.1.0</span>
-</div>
-
-<div class="tabs">
-  {#each tabs as tab}
-    <button
-      class="tab"
-      class:active={activeTab === tab.id}
-      onclick={() => (activeTab = tab.id)}
-    >
-      {tab.label}
-    </button>
-  {/each}
+  <span style="font-size: 12px; color: var(--fg3);">v0.1.0</span>
 </div>
 
 {#if oauthMessage}
-<div style="padding: 8px 16px; background: var(--primary); font-size: 13px; text-align: center;">
+<div style="padding: 8px 16px; background: var(--accent); color: #fff; font-size: 13px; text-align: center;">
   {oauthMessage}
 </div>
 {/if}
@@ -92,3 +80,18 @@
     <SettingsView />
   {/if}
 </div>
+
+<nav class="nav-bar">
+  {#each tabs as tab}
+    <button
+      class="nav-item"
+      class:active={activeTab === tab.id}
+      onclick={() => (activeTab = tab.id)}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d={tab.icon} />
+      </svg>
+      {tab.label}
+    </button>
+  {/each}
+</nav>

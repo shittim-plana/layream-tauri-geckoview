@@ -1,0 +1,89 @@
+<script>
+  import { invoke } from "../lib/tauri.js";
+
+  let { value = "", onchange, readonly = false } = $props();
+
+  let highlightHtml = $state("");
+  let diagnostics = $state([]);
+  let textareaEl;
+  let highlightEl;
+  let debounceTimer;
+
+  const KIND_CLASS = {
+    control: "cbs-block",
+    macro: "cbs-fn",
+    variable: "cbs-var",
+    bracket: "cbs-identity",
+  };
+
+  function escapeHtml(str) {
+    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  async function updateHighlight(text) {
+    try {
+      const result = await invoke("highlight_cbs", { input: text });
+      if (!result) return;
+
+      let html = "";
+      let lastEnd = 0;
+      for (const token of result.tokens) {
+        if (token.start > lastEnd) {
+          html += escapeHtml(text.slice(lastEnd, token.start));
+        }
+        const cls = KIND_CLASS[token.kind] || "";
+        html += `<span class="${cls}">${escapeHtml(text.slice(token.start, token.end))}</span>`;
+        lastEnd = token.end;
+      }
+      if (lastEnd < text.length) {
+        html += escapeHtml(text.slice(lastEnd));
+      }
+      html += "\n";
+      highlightHtml = html;
+      diagnostics = result.diagnostics || [];
+    } catch {
+      highlightHtml = escapeHtml(text) + "\n";
+      diagnostics = [];
+    }
+  }
+
+  function handleInput(e) {
+    const text = e.target.value;
+    if (onchange) onchange(text);
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => updateHighlight(text), 80);
+  }
+
+  function syncScroll() {
+    if (highlightEl && textareaEl) {
+      highlightEl.scrollTop = textareaEl.scrollTop;
+      highlightEl.scrollLeft = textareaEl.scrollLeft;
+    }
+  }
+
+  $effect(() => {
+    updateHighlight(value);
+  });
+</script>
+
+<div class="editor-wrap">
+  <div class="editor-highlight" bind:this={highlightEl}>
+    {@html highlightHtml}
+  </div>
+  <textarea
+    class="editor-textarea"
+    bind:this={textareaEl}
+    {value}
+    oninput={handleInput}
+    onscroll={syncScroll}
+    {readonly}
+    spellcheck="false"
+  ></textarea>
+</div>
+{#if diagnostics.length > 0}
+  <div class="diagnostics">
+    {#each diagnostics as d}
+      <div>Line {d.line}: {d.message}</div>
+    {/each}
+  </div>
+{/if}

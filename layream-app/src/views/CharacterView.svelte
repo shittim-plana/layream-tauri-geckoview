@@ -17,13 +17,18 @@
     loading = true;
     error = "";
     try {
+      error = `invoking load_character: ${name} (${data.length} bytes)...`;
       const result = await invoke("load_character", { name, data });
+      error = `result: ${result ? "ok" : "null"}, keys: ${result ? Object.keys(result).join(",") : "none"}`;
       if (result) {
         character = result;
         characterName = name;
+        error = "";
+      } else {
+        error = "load_character returned null/undefined";
       }
     } catch (e) {
-      error = String(e);
+      error = `load_character error: ${String(e)}`;
     }
     loading = false;
   }

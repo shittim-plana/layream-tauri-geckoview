@@ -12,7 +12,7 @@
   let unlisten;
 
   onMount(async () => {
-    if (isTauri) {
+    if (isTauri()) {
       try {
         const { listen } = await import("@tauri-apps/api/event");
         unlisten = await listen("chat-chunk", (event) => {

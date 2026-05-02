@@ -27,14 +27,19 @@
     loading = true;
     error = "";
     try {
+      error = `invoking load_preset: ${name} (${data.length} bytes)...`;
       const result = await invoke("load_preset", { name, data });
+      error = `result: ${result ? "ok" : "null"}, keys: ${result ? Object.keys(result).join(",") : "none"}`;
       if (result) {
         preset = result;
         presetName = name;
         editingIndex = -1;
+        error = "";
+      } else {
+        error = "load_preset returned null/undefined";
       }
     } catch (e) {
-      error = String(e);
+      error = `load_preset error: ${String(e)}`;
     }
     loading = false;
   }

@@ -5,59 +5,83 @@
 
   let loading = $state(false);
   let dragover = $state(false);
+  let debugMsg = $state("");
   let inputEl;
 
   async function pickFile() {
     if (disabled || loading) return;
     loading = true;
+    debugMsg = "picking file...";
+
     try {
-      if (isTauri) {
-        const { open } = await import("@tauri-apps/plugin-dialog");
-        const { readFile } = await import("@tauri-apps/plugin-fs");
-        const selected = await open({ multiple: false });
-        if (selected) {
-          const path = typeof selected === "string" ? selected : selected.path;
-          if (path) {
-            const bytes = await readFile(path);
-            const name = path.split("/").pop() || path.split("\\").pop() || "file";
+      if (isTauri()) {
+        debugMsg = "trying tauri dialog...";
+        try {
+          const dialogMod = await import("@tauri-apps/plugin-dialog");
+          debugMsg = "dialog imported, calling open()...";
+          const selected = await dialogMod.open({ multiple: false });
+          debugMsg = `open() returned: ${JSON.stringify(selected)?.slice(0, 200)}`;
+
+          if (selected) {
+            const path = typeof selected === "string" ? selected : selected.path || selected;
+            debugMsg = `path: ${path}, reading file...`;
+
+            const fsMod = await import("@tauri-apps/plugin-fs");
+            const bytes = await fsMod.readFile(path);
+            debugMsg = `read ${bytes.length} bytes`;
+
+            const name = String(path).split("/").pop() || "file";
             onfile?.(name, Array.from(bytes));
+            debugMsg = `sent ${bytes.length} bytes as "${name}"`;
+          } else {
+            debugMsg = "cancelled";
           }
+        } catch (dialogErr) {
+          debugMsg = `dialog error: ${dialogErr}, falling back to HTML input...`;
+          await pickViaInput();
         }
       } else {
+        debugMsg = "not tauri, using HTML input...";
         await pickViaInput();
       }
     } catch (e) {
-      console.error("File pick error:", e);
-      await pickViaInput();
+      debugMsg = `error: ${e}`;
     }
     loading = false;
   }
 
   function pickViaInput() {
     return new Promise((resolve) => {
-      if (!inputEl) { resolve(); return; }
-      inputEl.onchange = async (e) => {
+      if (!inputEl) { debugMsg = "no input element"; resolve(); return; }
+      debugMsg = "opening HTML file input...";
+      const handler = async (e) => {
         const file = e.target?.files?.[0];
         if (file) {
+          debugMsg = `file selected: ${file.name} (${file.size} bytes), reading...`;
           try {
-            const buf = await (file.arrayBuffer ? file.arrayBuffer() : readFileAsArrayBuffer(file));
-            onfile?.(file.name, Array.from(new Uint8Array(buf)));
-          } catch (err) { console.error("File read error:", err); }
+            const buf = await new Promise((res, rej) => {
+              const reader = new FileReader();
+              reader.onload = () => res(reader.result);
+              reader.onerror = () => rej(reader.error);
+              reader.readAsArrayBuffer(file);
+            });
+            debugMsg = `read ${buf.byteLength} bytes, converting...`;
+            const data = Array.from(new Uint8Array(buf));
+            debugMsg = `converted ${data.length} items, calling onfile...`;
+            onfile?.(file.name, data);
+            debugMsg = `done: ${file.name}`;
+          } catch (err) {
+            debugMsg = `read error: ${err}`;
+          }
+        } else {
+          debugMsg = "no file in event";
         }
-        inputEl.value = "";
+        if (inputEl) inputEl.value = "";
         resolve();
       };
+      inputEl.addEventListener("change", handler, { once: true });
       inputEl.click();
-      setTimeout(resolve, 30000);
-    });
-  }
-
-  function readFileAsArrayBuffer(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(reader.error);
-      reader.readAsArrayBuffer(file);
+      setTimeout(() => { debugMsg += " (timeout 30s)"; resolve(); }, 30000);
     });
   }
 
@@ -67,11 +91,18 @@
     const file = e.dataTransfer?.files?.[0];
     if (file && !loading) {
       loading = true;
+      debugMsg = `dropped: ${file.name}`;
       (async () => {
         try {
-          const buf = await (file.arrayBuffer ? file.arrayBuffer() : readFileAsArrayBuffer(file));
+          const buf = await new Promise((res, rej) => {
+            const reader = new FileReader();
+            reader.onload = () => res(reader.result);
+            reader.onerror = () => rej(reader.error);
+            reader.readAsArrayBuffer(file);
+          });
           onfile?.(file.name, Array.from(new Uint8Array(buf)));
-        } catch (err) { console.error("Drop read error:", err); }
+          debugMsg = `done: ${file.name}`;
+        } catch (err) { debugMsg = `drop error: ${err}`; }
         loading = false;
       })();
     }
@@ -102,6 +133,9 @@
     {#if extensions}
       <p style="font-size: 12px; margin-top: 4px;">{extensions}</p>
     {/if}
+  {/if}
+  {#if debugMsg}
+    <p style="font-size: 10px; color: var(--orange); margin-top: 8px; word-break: break-all;">{debugMsg}</p>
   {/if}
   <input
     bind:this={inputEl}

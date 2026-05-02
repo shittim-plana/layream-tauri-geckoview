@@ -2,6 +2,9 @@
   import { invoke } from "../lib/tauri.js";
   import { onMount } from "svelte";
 
+  let debugLog = $state("");
+  function dbg(msg) { debugLog = msg; }
+
   // --- Provider Assignment ---
   let chatProvider = $state("vertex");
   let summaryProvider = $state("vertex");
@@ -126,19 +129,26 @@
   }
 
   async function openExternal(url) {
+    dbg(`openExternal: ${url?.slice(0, 80)}...`);
     try {
       const { open } = await import("@tauri-apps/plugin-shell");
+      dbg("shell imported, calling open()...");
       await open(url);
-    } catch {
+      dbg("open() completed");
+    } catch (e) {
+      dbg(`shell.open failed: ${e}, trying location.href...`);
       window.location.href = url;
     }
   }
 
   async function startVertexAuth() {
+    dbg("startVertexAuth: calling invoke...");
     try {
       const url = await invoke("vertex_oauth_start");
+      dbg(`got url type=${typeof url}, val=${String(url)?.slice(0, 100)}`);
       if (url) await openExternal(url);
-    } catch (e) { console.error("Vertex auth error:", e); }
+      else dbg("url is falsy!");
+    } catch (e) { dbg(`Vertex auth CATCH: ${e}`); }
   }
 
   async function disconnectVertex() {
@@ -162,10 +172,12 @@
   }
 
   async function startGcaAuth() {
+    dbg("startGcaAuth...");
     try {
       const url = await invoke("gca_oauth_start");
+      dbg(`got url: ${url?.slice(0, 80)}...`);
       if (url) await openExternal(url);
-    } catch (e) { console.error("GCA auth error:", e); }
+    } catch (e) { dbg(`GCA auth error: ${e}`); }
   }
 
   async function disconnectGca() {
@@ -649,6 +661,16 @@
       </div>
     </div>
   </div>
+
+  <!-- Debug Log -->
+  {#if debugLog}
+  <div class="card" style="border-color: var(--orange);">
+    <div class="card-header"><span class="card-title" style="color: var(--orange);">Debug</span></div>
+    <div class="card-body">
+      <p style="font-size: 11px; color: var(--orange); word-break: break-all;">{debugLog}</p>
+    </div>
+  </div>
+  {/if}
 
   <!-- About -->
   <div class="card">

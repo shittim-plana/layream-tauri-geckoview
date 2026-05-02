@@ -98,22 +98,6 @@ pub fn default_safety_settings() -> Vec<SafetySetting> {
     .collect()
 }
 
-pub fn thinking_config_for_model(model: &str) -> Option<ThinkingConfig> {
-    if model.starts_with("gemma-") || (model.starts_with("gemini-3.") && !model.starts_with("gemini-3.1")) {
-        Some(ThinkingConfig::Level {
-            thinking_level: "HIGH".into(),
-        })
-    } else if model.starts_with("gemini-2.0-flash") {
-        Some(ThinkingConfig::Budget { thinking_budget: 0 })
-    } else if model.starts_with("gemini-3.1-") {
-        None
-    } else {
-        Some(ThinkingConfig::Budget {
-            thinking_budget: -1,
-        })
-    }
-}
-
 pub fn build_endpoint(project_id: &str, region: &str, model: &str) -> String {
     let host = if region == "global" {
         "aiplatform.googleapis.com".to_string()
@@ -264,27 +248,4 @@ mod tests {
         assert!(url.contains("locations/global"));
     }
 
-    #[test]
-    fn thinking_config_gemma() {
-        let cfg = thinking_config_for_model("gemma-4-31b-it");
-        assert!(matches!(cfg, Some(ThinkingConfig::Level { .. })));
-    }
-
-    #[test]
-    fn thinking_config_flash20() {
-        let cfg = thinking_config_for_model("gemini-2.0-flash");
-        assert!(matches!(cfg, Some(ThinkingConfig::Budget { thinking_budget: 0 })));
-    }
-
-    #[test]
-    fn thinking_config_31() {
-        let cfg = thinking_config_for_model("gemini-3.1-pro-preview");
-        assert!(cfg.is_none());
-    }
-
-    #[test]
-    fn thinking_config_default() {
-        let cfg = thinking_config_for_model("gemini-2.5-flash");
-        assert!(matches!(cfg, Some(ThinkingConfig::Budget { thinking_budget: -1 })));
-    }
 }

@@ -6,6 +6,8 @@
   let model = $state("gemini-2.5-flash");
   let authStatus = $state("Not connected");
   let voyageKey = $state("");
+  let mistralKey = $state("");
+  let mistralModel = $state("mistral-small-2603");
 
   const vertexModels = [
     "gemini-2.5-flash",
@@ -95,6 +97,22 @@
       <button onclick={checkAuth}>Check Status</button>
     </div>
     <p style="margin-top: 8px; font-size: 13px; color: var(--text-dim);">{authStatus}</p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-bottom: 12px;">Mistral AI</h3>
+    <div class="field">
+      <label>API Key</label>
+      <input type="password" bind:value={mistralKey} placeholder="..." />
+    </div>
+    <div class="field">
+      <label>Model</label>
+      <input type="text" bind:value={mistralModel} placeholder="mistral-small-2603" />
+    </div>
+    <p style="font-size: 12px; color: var(--text-dim);">
+      Free experiment plan available (opt-out).
+      Use /v1/models to fetch latest model list.
+    </p>
   </div>
 
   <div class="card">

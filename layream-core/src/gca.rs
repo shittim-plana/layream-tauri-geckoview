@@ -132,6 +132,78 @@ pub async fn generate_non_streaming(
     Ok(text)
 }
 
+pub async fn check_and_opt_out(
+    client: &reqwest::Client,
+    access_token: &str,
+) -> Result<bool, LayreamError> {
+    let url = format!("{}/getCodeAssistGlobalUserSetting", GCA_BASE);
+    let resp = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()
+        .await
+        .map_err(|e| LayreamError::Http(e.to_string()))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(LayreamError::ApiError { status, body });
+    }
+
+    let body: Value = resp.json().await.map_err(|e| LayreamError::Http(e.to_string()))?;
+
+    if body.get("freeTierDataCollectionOptin") == Some(&Value::Bool(true)) {
+        let set_url = format!("{}/setCodeAssistGlobalUserSetting", GCA_BASE);
+        let _ = client
+            .post(&set_url)
+            .header("Authorization", format!("Bearer {}", access_token))
+            .json(&serde_json::json!({ "freeTierDataCollectionOptin": false }))
+            .send()
+            .await
+            .map_err(|e| LayreamError::Http(e.to_string()))?;
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+pub async fn load_code_assist(
+    client: &reqwest::Client,
+    access_token: &str,
+) -> Result<String, LayreamError> {
+    let url = format!("{}/loadCodeAssist", GCA_BASE);
+    let body = serde_json::json!({
+        "metadata": {
+            "ideType": "IDE_UNSPECIFIED",
+            "platform": "PLATFORM_UNSPECIFIED",
+            "pluginType": "GEMINI"
+        }
+    });
+
+    let resp = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| LayreamError::Http(e.to_string()))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(LayreamError::ApiError { status, body });
+    }
+
+    let resp_body: Value = resp.json().await.map_err(|e| LayreamError::Http(e.to_string()))?;
+    let project_id = resp_body
+        .get("projectId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    Ok(project_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

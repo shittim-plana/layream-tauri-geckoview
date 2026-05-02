@@ -1,36 +1,42 @@
 <script>
   import { invoke } from "../lib/tauri.js";
+  import FileImport from "../components/FileImport.svelte";
+  import CBSEditor from "../components/CBSEditor.svelte";
 
   let preset = $state(null);
   let presetName = $state("");
   let loading = $state(false);
   let error = $state("");
 
-  let editingField = $state(null);
+  let subTab = $state("prompts");
+  let editingIndex = $state(-1);
+  let previewText = $state("");
+  let showPreview = $state(false);
 
-  async function loadPreset() {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".risup,.risupreset,.json,.preset";
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      loading = true;
-      error = "";
-      try {
-        const buf = await file.arrayBuffer();
-        const data = Array.from(new Uint8Array(buf));
-        const result = await invoke("load_preset", { name: file.name, data });
-        if (result) {
-          preset = result;
-          presetName = file.name;
-        }
-      } catch (e) {
-        error = String(e);
+  const TYPE_COLORS = {
+    plain: "var(--type-plain)", jailbreak: "var(--type-jailbreak)", cot: "var(--type-cot)",
+    chat: "var(--type-chat)", description: "var(--type-description)", persona: "var(--type-persona)",
+    lorebook: "var(--type-lorebook)", authornote: "var(--type-authornote)", memory: "var(--type-memory)",
+    postEverything: "var(--type-post)", cache: "var(--type-cache)", chatML: "var(--type-plain)",
+  };
+
+  const PROMPT_TYPES = ["plain", "jailbreak", "cot", "chat", "description", "persona", "lorebook", "authornote", "memory", "postEverything", "cache"];
+  const ROLES = ["system", "user", "bot"];
+
+  async function handleFile(name, data) {
+    loading = true;
+    error = "";
+    try {
+      const result = await invoke("load_preset", { name, data });
+      if (result) {
+        preset = result;
+        presetName = name;
+        editingIndex = -1;
       }
-      loading = false;
-    };
-    input.click();
+    } catch (e) {
+      error = String(e);
+    }
+    loading = false;
   }
 
   async function exportPreset(format) {
@@ -51,94 +57,274 @@
     }
   }
 
-  const fields = [
-    { key: "mainPrompt", label: "Main Prompt", type: "textarea" },
-    { key: "jailbreak", label: "Jailbreak", type: "textarea" },
-    { key: "globalNote", label: "Global Note", type: "textarea" },
-    { key: "temperature", label: "Temperature", type: "number" },
-    { key: "maxContext", label: "Max Context", type: "number" },
-    { key: "maxResponse", label: "Max Response", type: "number" },
-    { key: "frequencyPenalty", label: "Frequency Penalty", type: "number" },
-    { key: "PresensePenalty", label: "Presence Penalty", type: "number" },
-  ];
+  function closePreset() {
+    preset = null;
+    presetName = "";
+    editingIndex = -1;
+    error = "";
+  }
+
+  function getItemText(item) {
+    return item?.text ?? item?.innerFormat ?? "";
+  }
+
+  function setItemText(item, text) {
+    if ("text" in item) item.text = text;
+    else if ("innerFormat" in item) item.innerFormat = text;
+    else item.text = text;
+  }
+
+  function addPromptItem() {
+    if (!preset) return;
+    if (!preset.promptTemplate) preset.promptTemplate = [];
+    preset.promptTemplate = [...preset.promptTemplate, { type: "plain", role: "system", text: "" }];
+    editingIndex = preset.promptTemplate.length - 1;
+  }
+
+  function deletePromptItem(idx) {
+    if (!preset?.promptTemplate) return;
+    preset.promptTemplate = preset.promptTemplate.filter((_, i) => i !== idx);
+    if (editingIndex >= preset.promptTemplate.length) editingIndex = -1;
+  }
+
+  async function updatePreview() {
+    if (!preset?.promptTemplate?.[editingIndex]) return;
+    const text = getItemText(preset.promptTemplate[editingIndex]);
+    try {
+      previewText = await invoke("evaluate_cbs", { input: text, charName: "Character", userName: "User" });
+    } catch (e) {
+      previewText = `Error: ${e}`;
+    }
+  }
 </script>
 
 <div>
-  <div style="display: flex; gap: 8px; margin-bottom: 12px;">
-    <button onclick={loadPreset} disabled={loading}>
-      {loading ? "Loading..." : "Load Preset"}
-    </button>
-    {#if preset}
-      <button onclick={() => exportPreset("risup")}>Export .risup</button>
-      <button onclick={() => exportPreset("json")}>Export .json</button>
-    {/if}
-  </div>
-
   {#if error}
-    <div class="card" style="border-color: var(--accent); color: var(--accent);">
-      {error}
+    <div class="card" style="border-color: var(--red); color: var(--red);">
+      <div class="card-body">{error}</div>
     </div>
   {/if}
 
-  {#if preset}
-    <div class="card">
-      <div class="field">
-        <label>Preset Name</label>
-        <input type="text" bind:value={preset.name} />
-      </div>
-
-      {#if preset.aiModel}
-        <div class="field">
-          <label>AI Model</label>
-          <input type="text" bind:value={preset.aiModel} />
-        </div>
+  {#if !preset}
+    <div class="empty-state animate-in">
+      <FileImport
+        accept="application/json,application/octet-stream"
+        label="프리셋 파일 불러오기"
+        extensions=".risup, .risupreset, .json, .preset"
+        onfile={handleFile}
+        disabled={loading}
+      />
+      {#if loading}
+        <div class="spinner"></div>
       {/if}
     </div>
+  {:else}
+    <!-- Preset Header -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">{presetName}</span>
+        <div style="display: flex; gap: 6px;">
+          <button class="btn btn-sm btn-secondary" onclick={() => exportPreset("risup")}>Export .risup</button>
+          <button class="btn btn-sm btn-secondary" onclick={() => exportPreset("json")}>Export .json</button>
+          <button class="btn btn-sm btn-danger" onclick={closePreset}>Close</button>
+        </div>
+      </div>
+    </div>
 
-    {#each fields as field}
-      <div class="card">
-        <div class="field">
-          <label>{field.label}</label>
-          {#if field.type === "textarea"}
-            <textarea
-              rows="4"
-              value={preset[field.key] || ""}
-              oninput={(e) => (preset[field.key] = e.target.value)}
-            ></textarea>
-          {:else}
-            <input
-              type="number"
-              value={preset[field.key] || 0}
-              oninput={(e) => (preset[field.key] = Number(e.target.value))}
+    <!-- Sub-tabs -->
+    <div class="tab-bar">
+      <button class="tab-btn" class:active={subTab === "prompts"} onclick={() => { subTab = "prompts"; editingIndex = -1; }}>Prompts</button>
+      <button class="tab-btn" class:active={subTab === "regex"} onclick={() => subTab = "regex"}>Regex</button>
+      <button class="tab-btn" class:active={subTab === "params"} onclick={() => subTab = "params"}>Parameters</button>
+    </div>
+
+    <!-- Prompts Tab -->
+    {#if subTab === "prompts"}
+      {#if editingIndex >= 0 && preset.promptTemplate?.[editingIndex]}
+        {@const item = preset.promptTemplate[editingIndex]}
+        <!-- Back bar -->
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+          <button class="btn btn-sm btn-secondary" onclick={() => editingIndex = -1}>← Back</button>
+          <span style="font-size: 12px; color: var(--fg3);">{editingIndex + 1}/{preset.promptTemplate.length}</span>
+          <div style="display: flex; gap: 4px;">
+            <button class="btn btn-sm btn-secondary" disabled={editingIndex <= 0} onclick={() => editingIndex--}>Prev</button>
+            <button class="btn btn-sm btn-secondary" disabled={editingIndex >= preset.promptTemplate.length - 1} onclick={() => editingIndex++}>Next</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="prompt-type-badge" style="background: {TYPE_COLORS[item.type] || 'var(--bg4)'};">{item.type}</span>
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <select class="select" style="width: auto; padding: 4px 8px; font-size: 12px;" bind:value={item.type}>
+                {#each PROMPT_TYPES as t}<option value={t}>{t}</option>{/each}
+              </select>
+              {#if "role" in item}
+                <select class="select" style="width: auto; padding: 4px 8px; font-size: 12px;" bind:value={item.role}>
+                  {#each ROLES as r}<option value={r}>{r}</option>{/each}
+                </select>
+              {/if}
+              <button class="btn btn-sm btn-danger" onclick={() => { deletePromptItem(editingIndex); editingIndex = -1; }}>Delete</button>
+            </div>
+          </div>
+          <div class="card-body">
+            <CBSEditor
+              value={getItemText(item)}
+              onchange={(text) => setItemText(item, text)}
             />
+            <div style="margin-top: 8px; display: flex; gap: 6px;">
+              <button class="btn btn-sm btn-secondary" onclick={() => { showPreview = !showPreview; if (showPreview) updatePreview(); }}>
+                {showPreview ? "Hide Preview" : "Preview"}
+              </button>
+            </div>
+            {#if showPreview}
+              <div class="preview" style="margin-top: 8px;">{previewText}</div>
+            {/if}
+          </div>
+        </div>
+      {:else}
+        <!-- Prompt list -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Prompt Template ({preset.promptTemplate?.length || 0} items)</span>
+            <button class="btn btn-sm btn-primary" onclick={addPromptItem}>+ Add</button>
+          </div>
+          {#if preset.promptTemplate?.length}
+            <ul class="prompt-list">
+              {#each preset.promptTemplate as item, i}
+                <li class="prompt-item" onclick={() => editingIndex = i}>
+                  <span class="prompt-type-badge" style="background: {TYPE_COLORS[item.type] || 'var(--bg4)'};">{item.type}</span>
+                  <span class="prompt-item-text">
+                    {getItemText(item)?.slice(0, 60) || "(empty)"}{(getItemText(item)?.length || 0) > 60 ? "..." : ""}
+                  </span>
+                </li>
+              {/each}
+            </ul>
+          {:else}
+            <div class="card-body" style="text-align: center; color: var(--fg3);">
+              No prompt template items. Click + Add to create one.
+            </div>
+          {/if}
+        </div>
+      {/if}
+    {/if}
+
+    <!-- Regex Tab -->
+    {#if subTab === "regex"}
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Regex Scripts ({preset.customscript?.length || 0})</span>
+          <button class="btn btn-sm btn-primary" onclick={() => {
+            if (!preset.customscript) preset.customscript = [];
+            preset.customscript = [...preset.customscript, { comment: "", in: "", out: "", type: "editinput" }];
+          }}>+ Add</button>
+        </div>
+        {#if preset.customscript?.length}
+          <div class="card-body">
+            {#each preset.customscript as rule, i}
+              <div style="padding: 10px 0; border-bottom: 1px solid var(--bg4);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                  <input class="input" style="flex:1;" type="text" bind:value={rule.comment} placeholder="Comment" />
+                  <button class="btn-icon" style="color: var(--red);" onclick={() => {
+                    preset.customscript = preset.customscript.filter((_, j) => j !== i);
+                  }}>✕</button>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+                  <div class="field">
+                    <label class="label">Pattern</label>
+                    <input class="input" type="text" bind:value={rule.in} placeholder="/regex/flags" />
+                  </div>
+                  <div class="field">
+                    <label class="label">Replacement</label>
+                    <input class="input" type="text" bind:value={rule.out} placeholder="replacement" />
+                  </div>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="card-body" style="text-align: center; color: var(--fg3);">
+            No regex rules defined.
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- Parameters Tab -->
+    {#if subTab === "params"}
+      <div class="card">
+        <div class="card-header"><span class="card-title">Basic Parameters</span></div>
+        <div class="card-body">
+          <div class="field">
+            <label class="label">Preset Name</label>
+            <input class="input" type="text" bind:value={preset.name} />
+          </div>
+          {#if preset.aiModel !== undefined}
+            <div class="field">
+              <label class="label">AI Model</label>
+              <input class="input" type="text" bind:value={preset.aiModel} />
+            </div>
+          {/if}
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <div class="field">
+              <label class="label">Temperature</label>
+              <input class="input" type="number" step="0.1" bind:value={preset.temperature} />
+            </div>
+            <div class="field">
+              <label class="label">Max Context</label>
+              <input class="input" type="number" bind:value={preset.maxContext} />
+            </div>
+            <div class="field">
+              <label class="label">Max Response</label>
+              <input class="input" type="number" bind:value={preset.maxResponse} />
+            </div>
+            <div class="field">
+              <label class="label">Top P</label>
+              <input class="input" type="number" step="0.01" bind:value={preset.top_p} />
+            </div>
+            <div class="field">
+              <label class="label">Top K</label>
+              <input class="input" type="number" bind:value={preset.top_k} />
+            </div>
+            <div class="field">
+              <label class="label">Min P</label>
+              <input class="input" type="number" step="0.01" bind:value={preset.min_p} />
+            </div>
+            <div class="field">
+              <label class="label">Freq Penalty</label>
+              <input class="input" type="number" step="0.1" bind:value={preset.frequencyPenalty} />
+            </div>
+            <div class="field">
+              <label class="label">Presence Penalty</label>
+              <input class="input" type="number" step="0.1" bind:value={preset.PresensePenalty} />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Prompt Settings</span></div>
+        <div class="card-body">
+          <div class="field">
+            <label class="label">Main Prompt</label>
+            <textarea class="textarea" rows="4" bind:value={preset.mainPrompt}></textarea>
+          </div>
+          <div class="field">
+            <label class="label">Jailbreak</label>
+            <textarea class="textarea" rows="4" bind:value={preset.jailbreak}></textarea>
+          </div>
+          <div class="field">
+            <label class="label">Global Note</label>
+            <textarea class="textarea" rows="3" bind:value={preset.globalNote}></textarea>
+          </div>
+          {#if preset.assistantPrefill !== undefined}
+            <div class="field">
+              <label class="label">Assistant Prefill</label>
+              <textarea class="textarea" rows="2" bind:value={preset.assistantPrefill}></textarea>
+            </div>
           {/if}
         </div>
       </div>
-    {/each}
-
-    {#if preset.promptTemplate?.length}
-      <div class="card">
-        <label style="margin-bottom: 8px; display: block;">
-          Prompt Template ({preset.promptTemplate.length} items)
-        </label>
-        {#each preset.promptTemplate as item, i}
-          <div style="padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px;">
-            <span style="color: var(--accent);">{item.type}</span>
-            {#if item.text}
-              <span style="color: var(--text-dim); margin-left: 8px;">
-                {item.text.slice(0, 60)}{item.text.length > 60 ? "..." : ""}
-              </span>
-            {/if}
-          </div>
-        {/each}
-      </div>
     {/if}
-  {:else}
-    <div class="card" style="text-align: center; padding: 48px;">
-      <p style="color: var(--text-dim);">Load a preset file to begin editing</p>
-      <p style="font-size: 12px; color: var(--text-dim); margin-top: 8px;">
-        Supports .risup, .risupreset, .json
-      </p>
-    </div>
   {/if}
 </div>

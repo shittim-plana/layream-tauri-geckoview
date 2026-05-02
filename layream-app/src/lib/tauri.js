@@ -9,14 +9,4 @@ export async function invoke(cmd, args) {
   return null;
 }
 
-export function openFile(accept) {
-  return new Promise((resolve) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    if (accept) input.accept = accept;
-    input.onchange = () => resolve(input.files?.[0] || null);
-    input.click();
-  });
-}
-
 export { isTauri };

@@ -1,4 +1,7 @@
+use tauri::Manager;
+
 mod commands;
+mod persistence;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -12,12 +15,20 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_deep_link::init())
         .manage(commands::AuthState::default())
+        .manage(commands::RequestLogState::default())
+        .setup(|app| {
+            let auth_state = app.state::<commands::AuthState>();
+            auth_state.load_persisted_tokens(app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::load_preset,
             commands::export_preset,
             commands::load_character,
             commands::evaluate_cbs,
-            commands::chat_send,
+            commands::chat_vertex,
+            commands::chat_gca,
+            commands::chat_mistral,
             commands::vertex_oauth_start,
             commands::vertex_oauth_callback,
             commands::vertex_oauth_status,
@@ -29,6 +40,17 @@ pub fn run() {
             commands::vertex_oauth_disconnect,
             commands::mistral_list_models,
             commands::vertex_list_models,
+            commands::highlight_cbs,
+            commands::get_request_logs,
+            commands::clear_request_logs,
+            commands::cmd_save_settings,
+            commands::cmd_load_settings,
+            commands::embed_vertex,
+            commands::embed_voyage,
+            commands::gca_load_code_assist,
+            commands::gca_check_opt_out,
+            commands::cmd_save_hypa,
+            commands::cmd_load_hypa,
         ])
         .run(tauri::generate_context!());
 

@@ -3,6 +3,8 @@
 **/dist/
 *.apk
 *.aab
+**/gen/android/
+**/gen/schemas/
 .claude/
 PLAN.md
 HANDOFF.md

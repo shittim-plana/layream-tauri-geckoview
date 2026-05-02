@@ -224,7 +224,7 @@ pub async fn list_models(
     Ok(list.data)
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ModelInfo {
     pub id: String,
     pub object: Option<String>,

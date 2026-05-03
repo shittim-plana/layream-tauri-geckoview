@@ -12,7 +12,7 @@ use layream_core::vertex_api::{
 use layream_core::vertex_auth::{
     self, OAuthCredentials, PkceChallenge, Tokens, VERTEX_CLIENT_ID, LAYREAM_REDIRECT_URI,
 };
-use layream_core::gca::GCA_OAUTH_CLIENT_ID;
+use layream_core::gca::{GCA_OAUTH_CLIENT_ID, GCA_OAUTH_CLIENT_SECRET, GCA_OAUTH_SCOPE};
 use layream_core::voyage;
 use serde_json::Value;
 use std::sync::Mutex;
@@ -385,16 +385,83 @@ pub fn vertex_oauth_start(state: State<'_, AuthState>) -> Result<String, String>
 }
 
 #[tauri::command]
-pub fn gca_oauth_start(state: State<'_, AuthState>) -> Result<String, String> {
-    let pkce = vertex_auth::generate_pkce();
-    let creds = OAuthCredentials {
-        client_id: GCA_OAUTH_CLIENT_ID.to_string(),
-        client_secret: None,
-        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
-    };
-    let url = vertex_auth::build_auth_url(&creds, Some(&pkce));
-    *state.gca_pkce.lock().unwrap() = Some(pkce);
-    Ok(url)
+pub async fn gca_oauth_start(
+    state: State<'_, AuthState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| format!("Failed to bind loopback server: {}", e))?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let redirect_uri = format!("http://localhost:{}/oauth2callback", port);
+
+    let auth_url = format!(
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=select_account%20consent",
+        vertex_auth::urlencoded(GCA_OAUTH_CLIENT_ID),
+        vertex_auth::urlencoded(&redirect_uri),
+        vertex_auth::urlencoded(GCA_OAUTH_SCOPE),
+    );
+
+    let app_clone = app.clone();
+    let redirect_for_exchange = redirect_uri.clone();
+    tokio::spawn(async move {
+        let accept_result = tokio::time::timeout(
+            std::time::Duration::from_secs(300),
+            listener.accept(),
+        ).await;
+        let (stream, _) = match accept_result {
+            Ok(Ok(v)) => v,
+            _ => return,
+        };
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = stream;
+        let mut buf = vec![0u8; 4096];
+        let n = match stream.read(&mut buf).await {
+            Ok(n) => n,
+            _ => return,
+        };
+        let request = String::from_utf8_lossy(&buf[..n]);
+        let code = match extract_code_from_request(&request) {
+            Some(c) => c,
+            None => return,
+        };
+        let client = reqwest::Client::new();
+        let creds = OAuthCredentials {
+            client_id: GCA_OAUTH_CLIENT_ID.to_string(),
+            client_secret: Some(GCA_OAUTH_CLIENT_SECRET.to_string()),
+            redirect_uri: redirect_for_exchange,
+        };
+        match vertex_auth::exchange_code(&client, &creds, &code, None).await {
+            Ok(tokens) => {
+                use tauri::Manager;
+                let auth: tauri::State<'_, AuthState> = app_clone.state();
+                *auth.gca_tokens.lock().unwrap() = Some(tokens);
+                auth.persist_tokens(&app_clone);
+                let _ = app_clone.emit("gca-auth-complete", "ok");
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><h2>GCA Connected!</h2><p>You can close this tab.</p></body></html>").await;
+            }
+            Err(e) => {
+                let _ = app_clone.emit("gca-auth-complete", format!("error: {}", e));
+                let body = format!("<html><body><h2>Error</h2><p>{}</p></body></html>", e);
+                let _ = stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n{}", body).as_bytes()).await;
+            }
+        }
+    });
+
+    Ok(auth_url)
+}
+
+fn extract_code_from_request(request: &str) -> Option<String> {
+    let first_line = request.lines().next()?;
+    let path = first_line.split_whitespace().nth(1)?;
+    let query = path.split('?').nth(1)?;
+    for param in query.split('&') {
+        let mut kv = param.splitn(2, '=');
+        if kv.next()? == "code" {
+            return Some(kv.next()?.to_string());
+        }
+    }
+    None
 }
 
 #[tauri::command]

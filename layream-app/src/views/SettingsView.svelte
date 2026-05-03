@@ -176,7 +176,20 @@
     try {
       const url = await invoke("gca_oauth_start");
       dbg(`got url: ${url?.slice(0, 80)}...`);
-      if (url) await openExternal(url);
+      if (url) {
+        await openExternal(url);
+        try {
+          const { listen } = await import("@tauri-apps/api/event");
+          const unlisten = await listen("gca-auth-complete", (event) => {
+            dbg(`GCA auth result: ${event.payload}`);
+            if (event.payload === "ok") {
+              checkGcaStatus();
+              loadGcaProfile();
+            }
+            unlisten();
+          });
+        } catch (e) { dbg(`event listen failed: ${e}`); }
+      }
     } catch (e) { dbg(`GCA auth error: ${e}`); }
   }
 

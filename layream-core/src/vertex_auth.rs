@@ -84,7 +84,7 @@ pub fn build_auth_url(creds: &OAuthCredentials, pkce: Option<&PkceChallenge>) ->
         ("response_type", "code"),
         ("scope", SCOPE),
         ("access_type", "offline"),
-        ("prompt", "consent"),
+        ("prompt", "select_account consent"),
     ];
     let challenge_str;
     if let Some(p) = pkce {
@@ -270,7 +270,7 @@ pub async fn list_gcp_projects(
     Ok(projects)
 }
 
-fn urlencoded(s: &str) -> String {
+pub fn urlencoded(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
@@ -296,7 +296,7 @@ mod tests {
         assert!(url.starts_with(AUTH_ENDPOINT));
         assert!(url.contains("client_id=test-client"));
         assert!(url.contains("access_type=offline"));
-        assert!(url.contains("prompt=consent"));
+        assert!(url.contains("prompt=select_account"));
     }
 
     #[test]

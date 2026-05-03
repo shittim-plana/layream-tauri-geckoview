@@ -13,20 +13,28 @@ Prompt editor, AI testing studio, and more — powered by Rust.
 ## Features / 기능
 
 - Load/edit prompt presets (RisuAI .risup / .json compatible)
-- Character card viewer (.charx / .jpeg / .png / .json)
+- Character card viewer (.charx / .jpeg / .png / .json) with asset gallery, regex display, alternate greetings
+- .risum module parser and viewer
 - CBS template editor with syntax highlighting and diagnostics
 - Test prompts via Vertex AI, GCA, Mistral AI (SSE streaming)
-- HyPA v3 long-term memory (summarization + embedding + retrieval)
+- **Autopilot v2**: automated conversation testing — user persona, char-to-char mode, pause/resume FSM, structured output (response_schema)
+- **HyPA v3**: auto-summarize + cosine search + RAG context injection + Pin (pin_boost) + invalidation/cleanup + viewer modal
 - Customscript regex editor
+- Session/preset persistence with app-close flush
+- Structured output support (Vertex/GCA responseSchema + Mistral json_schema)
 
 ---
 
 - 프롬프트 프리셋 로드/편집 (RisuAI .risup / .json 호환)
-- 캐릭터 카드 뷰어 (.charx / .jpeg / .png / .json)
+- 캐릭터 카드 뷰어 (.charx / .jpeg / .png / .json) + 에셋 갤러리, 정규식, 대체 인사말
+- .risum 모듈 파서 및 뷰어
 - CBS 템플릿 에디터 (구문 하이라이팅 + 블록 진단)
 - Vertex AI, GCA, Mistral AI로 프롬프트 테스트 (SSE 스트리밍)
-- HyPA v3 장기 메모리 (요약 + 임베딩 + 검색)
+- **오토파일럿 v2**: 자동 대화 테스트 — 유저 페르소나, 캐릭터 간 대화, 일시정지/재개, structured output
+- **HyPA v3**: 자동 요약 + cosine 검색 + RAG 컨텍스트 주입 + 핀(pin_boost) + 무효화/정리 + 뷰어 모달
 - customscript 정규식 편집기
+- 세션/프리셋 영속화 + 앱 종료 시 자동 저장
+- Structured output (Vertex/GCA responseSchema + Mistral json_schema)
 
 ## Supported API Providers / 지원 API
 
@@ -51,8 +59,11 @@ Model selection supports both predefined suggestions and free-text input for unl
 ## Project Structure / 프로젝트 구조
 
 ```
-layream-core/     Shared Rust library (16 modules, 65 tests)
-layream-app/      Tauri 2.0 app (Svelte frontend + Rust backend)
+layream-core/     Shared Rust library (16 modules, 85+ tests)
+layream-app/      Tauri 2.0 app (Svelte 5 frontend + Rust backend)
+  src/views/        ChatView, AutopilotView, HypaView, TestView, PresetView, CharacterView, SettingsView
+  src/components/   FileImport, CBSEditor, HypaModal
+  src-tauri/src/    commands.rs, commands_hypa.rs, persistence.rs, lib.rs
 ```
 
 ## Build / 빌드
@@ -67,9 +78,13 @@ cd layream-app && npm install && npm run build
 
 ## Status / 상태
 
-Work in progress. Core library and app scaffold are complete. APK and web builds are not yet available.
+**v0.3.0-alpha** — [Download APK](https://github.com/shittim-plana/layream/releases/tag/v0.3.0-alpha)
 
-개발 진행 중. 코어 라이브러리와 앱 골격은 완성. APK 및 웹 빌드는 아직 제공되지 않음.
+Core library stable (85+ tests). Android APK available as prerelease. Web build not yet available.
+
+**v0.3.0-alpha** — [APK 다운로드](https://github.com/shittim-plana/layream/releases/tag/v0.3.0-alpha)
+
+코어 라이브러리 안정 (85+ 테스트). Android APK prerelease 제공. 웹 빌드는 미제공.
 
 ## License / 라이선스
 

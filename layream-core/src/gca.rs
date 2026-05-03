@@ -6,6 +6,8 @@ use crate::vertex_api::{GenerateRequest, StreamChunk};
 
 const GCA_BASE: &str = "https://cloudcode-pa.googleapis.com/v1internal";
 pub const GCA_OAUTH_CLIENT_ID: &str = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
+pub const GCA_OAUTH_CLIENT_SECRET: &str = "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";
+pub const GCA_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile";
 
 pub const GCA_MODELS: &[&str] = &[
     "gemini-3.1-pro-preview",

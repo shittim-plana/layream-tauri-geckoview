@@ -91,7 +91,7 @@
           inputEl.removeEventListener("change", handler);
           resolve();
         }
-      }, 5000);
+      }, 120000);
     });
   }
 

@@ -494,6 +494,10 @@ button {
   padding: 10px 16px;
   outline: none;
   font-family: inherit;
+  min-height: 36px;
+  max-height: 120px;
+  overflow-y: auto;
+  resize: none;
 }
 
 .chat-input:focus { border-color: var(--accent); }

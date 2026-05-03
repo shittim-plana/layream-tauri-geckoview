@@ -61,6 +61,9 @@
     if (!chatInput.trim() || streaming) return;
     const userMsg = chatInput.trim();
     chatInput = "";
+    // Reset textarea height after clearing input
+    const chatTextarea = document.querySelector('.chat-input');
+    if (chatTextarea) chatTextarea.style.height = 'auto';
     messages = [...messages, { role: "user", text: userMsg, time: new Date().toLocaleTimeString() }];
     streaming = true;
     streamingText = "";
@@ -128,6 +131,12 @@
     }
     streaming = false;
     streamingText = "";
+  }
+
+  function autoResize(e) {
+    const el = e.target;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
   }
 
   function handleChatKeydown(e) {
@@ -341,6 +350,8 @@
           placeholder="메시지를 입력하세요..."
           bind:value={chatInput}
           onkeydown={handleChatKeydown}
+          oninput={autoResize}
+          style="height: auto; min-height: 36px;"
         ></textarea>
         <button class="send-btn" onclick={sendMessage} disabled={streaming || !chatInput.trim()}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">

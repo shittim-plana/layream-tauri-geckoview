@@ -14,7 +14,19 @@
   let streamingText = $state("");
   let chatContainer;
   let unlisten;
+  let unlistenAppFlush;
   let sessionSaveTimeout;
+
+  // Stable id for each message — used by HyPA Summary.chatMemos to link
+  // summaries back to the originating messages (and by hypa_pin_message /
+  // hypa_invalidate_summary cascades). crypto.randomUUID is available on
+  // every modern browser/WebView; fallback covers older Android WebViews.
+  function newChatId() {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
 
   onMount(async () => {
     if (isTauri()) {
@@ -22,6 +34,18 @@
         const { listen } = await import("@tauri-apps/api/event");
         unlisten = await listen("chat-chunk", (event) => {
           streamingText += event.payload;
+        });
+        // app-flush: App.svelte broadcasts this on close-requested; we save
+        // immediately rather than waiting for the 1000ms session debounce
+        // (which the window-destroy timer would race past). Without this,
+        // the 500ms grace in App.svelte is just dead time.
+        unlistenAppFlush = await listen("app-flush", async () => {
+          clearTimeout(sessionSaveTimeout);
+          if (sessionLoaded) {
+            try {
+              await invoke("cmd_save_session", { session: { messages } });
+            } catch (e) { console.warn("ChatView app-flush save failed:", e); }
+          }
         });
       } catch (e) { console.warn("Event listen failed:", e); }
     }
@@ -43,6 +67,7 @@
 
   onDestroy(() => {
     if (unlisten) unlisten();
+    if (unlistenAppFlush) unlistenAppFlush();
     // Flush pending session save immediately before clearing timeout
     if (sessionLoaded && messages.length > 0) {
       invoke("cmd_save_session", { session: { messages } }).catch(() => {});
@@ -101,7 +126,7 @@
   }
 
   async function sendChatMessage(userMsg) {
-    messages = [...messages, { role: "user", text: userMsg, time: new Date().toLocaleTimeString() }];
+    messages = [...messages, { chatId: newChatId(), role: "user", text: userMsg, time: new Date().toLocaleTimeString() }];
     streaming = true;
     streamingText = "";
 
@@ -183,7 +208,7 @@
 
       const responseText = streamingText || result || "";
       if (responseText) {
-        messages = [...messages, { role: "char", text: responseText, time: new Date().toLocaleTimeString() }];
+        messages = [...messages, { chatId: newChatId(), role: "char", text: responseText, time: new Date().toLocaleTimeString() }];
 
         // HyPA: trigger auto-summarization at unit boundaries
         if (hypaApi?.triggerSummarizationIfNeeded) {
@@ -195,7 +220,7 @@
       }
       return responseText;
     } catch (e) {
-      messages = [...messages, { role: "error", text: `Error: ${e}`, time: new Date().toLocaleTimeString() }];
+      messages = [...messages, { chatId: newChatId(), role: "error", text: `Error: ${e}`, time: new Date().toLocaleTimeString() }];
       throw e;
     } finally {
       streaming = false;

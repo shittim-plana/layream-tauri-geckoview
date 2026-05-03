@@ -23,6 +23,8 @@
   // last-seen length used by triggerSummarizationIfNeeded() to fire exactly once
   // per crossing of a summaryUnit boundary.
   let lastSummarizedAt = 0;
+  // app-flush listener cleanup handle. Set in onMount, called in onDestroy.
+  let unlistenAppFlush;
 
   onMount(async () => {
     try {
@@ -52,30 +54,49 @@
       triggerSummarizationIfNeeded,
       getRagContext,
     });
+
+    // app-flush listener: when App.svelte broadcasts "app-flush" before
+    // window destroy, persist any pending settings/summaries immediately,
+    // bypassing the 500ms debounce. The 500ms grace window in App.svelte
+    // is only meaningful if listeners actually save here.
+    try {
+      const { listen } = await import("@tauri-apps/api/event");
+      unlistenAppFlush = await listen("app-flush", async () => {
+        clearTimeout(hypaSettingsSaveTimeout);
+        await Promise.all([flushSettingsSave(), saveHypa()]);
+      });
+    } catch (e) {
+      console.warn("HypaView app-flush listener unavailable:", e);
+    }
   });
 
   onDestroy(() => {
     clearTimeout(hypaSettingsSaveTimeout);
+    if (unlistenAppFlush) unlistenAppFlush();
   });
+
+  // Single save path — called via either debounced timer (typing) or
+  // immediate flush on app-close. Idempotent: safe to call multiple times.
+  async function flushSettingsSave() {
+    try {
+      const existing = await invoke("cmd_load_settings") || {};
+      existing.hypa = {
+        enabled: hypaEnabled,
+        summaryModel: hypaSummaryModel,
+        summaryTemp: hypaSummaryTemp,
+        summaryPrompt: hypaSummaryPrompt,
+        summaryUnit: hypaSummaryUnit,
+        embeddingProvider: hypaEmbeddingProvider,
+        embeddingModel: hypaEmbeddingModel,
+        similarRatio: hypaSimilarRatio,
+      };
+      await invoke("cmd_save_settings", { settings: existing });
+    } catch (e) { console.warn("Failed to save HyPA settings:", e); }
+  }
 
   function scheduleHypaSettingsSave() {
     clearTimeout(hypaSettingsSaveTimeout);
-    hypaSettingsSaveTimeout = setTimeout(async () => {
-      try {
-        const existing = await invoke("cmd_load_settings") || {};
-        existing.hypa = {
-          enabled: hypaEnabled,
-          summaryModel: hypaSummaryModel,
-          summaryTemp: hypaSummaryTemp,
-          summaryPrompt: hypaSummaryPrompt,
-          summaryUnit: hypaSummaryUnit,
-          embeddingProvider: hypaEmbeddingProvider,
-          embeddingModel: hypaEmbeddingModel,
-          similarRatio: hypaSimilarRatio,
-        };
-        await invoke("cmd_save_settings", { settings: existing });
-      } catch (e) { console.warn("Failed to save HyPA settings:", e); }
-    }, 500);
+    hypaSettingsSaveTimeout = setTimeout(flushSettingsSave, 500);
   }
 
   $effect(() => {
@@ -90,7 +111,10 @@
 
   async function loadHypa() {
     try {
-      const data = await invoke("cmd_load_hypa");
+      // hypa_load_all returns the raw hypa.json `{ summaries: [...] }`.
+      // Field shape matches RisuAI HypaV3 (chatMemos/isImportant preserved
+      // by serde rename in commands_hypa.rs Summary struct).
+      const data = await invoke("hypa_load_all");
       hypaSummaries = data?.summaries || [];
       hypaMemoryCount = hypaSummaries.length;
     } catch (e) { console.warn("Failed to load HyPA:", e); }
@@ -98,7 +122,10 @@
 
   async function saveHypa() {
     try {
-      await invoke("cmd_save_hypa", { summaries: { summaries: hypaSummaries } });
+      // hypa_save_all takes a single `summaries: Value` arg — we pass the
+      // full hypa.json object (containing `summaries` key) so the file is
+      // overwritten atomically. Outer key matches the Rust parameter name.
+      await invoke("hypa_save_all", { summaries: { summaries: hypaSummaries } });
     } catch (e) { console.warn("Failed to save HyPA:", e); }
   }
 
@@ -165,18 +192,6 @@
 
   async function refreshHypa() {
     hypaActionStatus = "refreshing...";
-    // hypa_load_all is the new (todo!) name; until backend lands, fall back
-    // to cmd_load_hypa which has worked since v0.2.0. We try the new name
-    // first so once the skeleton is filled in this becomes a no-op switch.
-    try {
-      const data = await invoke("hypa_load_all");
-      hypaSummaries = data?.summaries || [];
-      hypaMemoryCount = hypaSummaries.length;
-      hypaActionStatus = `refreshed ${hypaSummaries.length} summaries`;
-      return;
-    } catch (e) {
-      console.warn("hypa_load_all failed, falling back to cmd_load_hypa:", e);
-    }
     try {
       await loadHypa();
       hypaActionStatus = `refreshed ${hypaSummaries.length} summaries`;
@@ -236,9 +251,16 @@
           embeddingModel: hypaEmbeddingModel,
         },
       });
-      // Backend appends to hypa.json; we reload to stay in sync.
-      await loadHypa();
-      return result ?? null;
+      // Backend (commands_hypa.rs:320) returns the Summary but does NOT
+      // persist — caller assigns chatMemos from message ids and saves.
+      // Without this step, hypa.json is never written and summaries are lost.
+      if (!result || typeof result !== "object") return null;
+      const memos = slice.map((m) => m && m.chatId).filter(Boolean);
+      const summary = { ...result, chatMemos: memos };
+      hypaSummaries = [...hypaSummaries, summary];
+      hypaMemoryCount = hypaSummaries.length;
+      await saveHypa();
+      return summary;
     } catch (e) {
       console.warn("hypa_summarize failed:", e);
       return null;
@@ -253,9 +275,13 @@
     if (!hypaEnabled) return [];
     if (!Array.isArray(queryEmbedding) || queryEmbedding.length === 0) return [];
     try {
+      // §3-D: Rust signature is `query_embedding: Vec<f64>, top_k: usize` —
+      // Tauri matches arg names verbatim (no auto camelCase conversion in this
+      // project's invoke wrapper, see lib/tauri.js). camelCase keys here would
+      // arrive as `None` in Rust → "missing argument" error.
       const results = await invoke("hypa_search", {
-        queryEmbedding,
-        topK,
+        query_embedding: queryEmbedding,
+        top_k: topK,
       });
       return Array.isArray(results) ? results : [];
     } catch (e) {

@@ -14,35 +14,7 @@
     debugMsg = "";
 
     try {
-      if (isTauri()) {
-        try {
-          const dialogMod = await import("@tauri-apps/plugin-dialog");
-          const selected = await dialogMod.open({ multiple: false });
-
-          if (selected) {
-            const path = typeof selected === "string" ? selected : selected.path || selected;
-            const fsMod = await import("@tauri-apps/plugin-fs");
-            const bytes = await fsMod.readFile(path);
-            const name = String(path).split("/").pop() || "file";
-            if (typeof onfile === "function") {
-              try {
-                await onfile(name, Array.from(bytes));
-              } catch (invokeErr) {
-                debugMsg = `error: ${invokeErr}`;
-              }
-            } else {
-              debugMsg = `error: onfile is not a function (${typeof onfile})`;
-            }
-          } else {
-            debugMsg = "cancelled";
-          }
-        } catch (dialogErr) {
-          debugMsg = `dialog error: ${dialogErr}`;
-          await pickViaInput();
-        }
-      } else {
-        await pickViaInput();
-      }
+      await pickViaInput();
     } catch (e) {
       debugMsg = `error: ${e}`;
     }

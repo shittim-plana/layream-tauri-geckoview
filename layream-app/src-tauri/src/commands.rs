@@ -974,8 +974,12 @@ pub async fn generate_user_message(
             });
 
             let response_format = response_schema.as_ref().map(|schema| mistral::ResponseFormat {
-                format_type: "json_object".to_string(),
-                schema: Some(schema.clone()),
+                format_type: "json_schema".to_string(),
+                json_schema: Some(mistral::JsonSchemaSpec {
+                    name: "user_message".to_string(),
+                    schema: schema.clone(),
+                    strict: true,
+                }),
             });
 
             let request = mistral::ChatRequest {

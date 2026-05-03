@@ -47,11 +47,19 @@ pub struct ChatMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonSchemaSpec {
+    pub name: String,
+    pub schema: Value,
+    #[serde(default)]
+    pub strict: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseFormat {
     #[serde(rename = "type")]
     pub format_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub schema: Option<Value>,
+    pub json_schema: Option<JsonSchemaSpec>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -324,25 +332,31 @@ mod tests {
     fn response_format_json() {
         let rf = ResponseFormat {
             format_type: "json_object".into(),
-            schema: None,
+            json_schema: None,
         };
         let json = serde_json::to_string(&rf).unwrap();
         assert!(json.contains("\"type\":\"json_object\""));
-        assert!(!json.contains("schema"));
+        assert!(!json.contains("json_schema"));
     }
 
     #[test]
-    fn response_format_json_with_schema() {
+    fn response_format_json_schema() {
         let rf = ResponseFormat {
-            format_type: "json_object".into(),
-            schema: Some(serde_json::json!({
-                "type": "object",
-                "properties": { "name": { "type": "string" } }
-            })),
+            format_type: "json_schema".into(),
+            json_schema: Some(JsonSchemaSpec {
+                name: "user_message".into(),
+                schema: serde_json::json!({
+                    "type": "object",
+                    "properties": { "name": { "type": "string" } }
+                }),
+                strict: true,
+            }),
         };
         let json = serde_json::to_string(&rf).unwrap();
-        assert!(json.contains("\"type\":\"json_object\""));
-        assert!(json.contains("\"schema\""));
+        assert!(json.contains("\"type\":\"json_schema\""));
+        assert!(json.contains("\"json_schema\""));
+        assert!(json.contains("\"name\":\"user_message\""));
+        assert!(json.contains("\"strict\":true"));
         assert!(json.contains("\"properties\""));
     }
 }

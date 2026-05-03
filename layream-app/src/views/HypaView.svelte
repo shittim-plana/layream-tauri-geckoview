@@ -19,7 +19,9 @@
   let hypaSettingsSaveTimeout;
   let hypaImportStatus = $state("");
   let hypaActionStatus = $state("");
+  const STATUS_CLEAR_MS = 3000;
   let modalSummary = $state(null);
+  let modalIndex = $state(-1);
   function getMinSummarizedAt() {
     return (hypaSummaries.length || 0) * (Number(hypaSummaryUnit) || 10);
   }
@@ -155,9 +157,11 @@
         hypaImportStatus = `no "summaries" key in JSON`;
       }
     } catch (e) { hypaImportStatus = `import error: ${e}`; }
+    setTimeout(() => { hypaImportStatus = ""; }, STATUS_CLEAR_MS);
   }
 
   function clearHypa() {
+    if (!confirm("Clear ALL summaries? This cannot be undone.")) return;
     hypaSummaries = [];
     hypaMemoryCount = 0;
     saveHypa();
@@ -166,19 +170,19 @@
   // ------- Summary list actions -------
 
   function openModal(index) {
+    modalIndex = index;
     modalSummary = hypaSummaries[index] ?? null;
   }
 
   function closeModal() {
     modalSummary = null;
+    modalIndex = -1;
   }
 
   async function toggleImportantOnModal() {
-    if (!modalSummary) return;
-    const idx = hypaSummaries.indexOf(modalSummary);
-    if (idx < 0) return;
-    const next = { ...hypaSummaries[idx], isImportant: !hypaSummaries[idx].isImportant };
-    hypaSummaries = [...hypaSummaries.slice(0, idx), next, ...hypaSummaries.slice(idx + 1)];
+    if (!modalSummary || modalIndex < 0 || modalIndex >= hypaSummaries.length) return;
+    const next = { ...hypaSummaries[modalIndex], isImportant: !hypaSummaries[modalIndex].isImportant };
+    hypaSummaries = [...hypaSummaries.slice(0, modalIndex), next, ...hypaSummaries.slice(modalIndex + 1)];
     modalSummary = next;
     await saveHypa();
   }
@@ -198,6 +202,7 @@
     } catch (e) {
       hypaActionStatus = `refresh failed: ${e}`;
     }
+    setTimeout(() => { hypaActionStatus = ""; }, STATUS_CLEAR_MS);
   }
 
   async function cleanupHypa() {
@@ -208,6 +213,7 @@
       hypaActionStatus = `removed ${removed ?? 0} empty summaries`;
       // Reload after backend mutation.
       await loadHypa();
+      setTimeout(() => { hypaActionStatus = ""; }, STATUS_CLEAR_MS);
       return;
     } catch (e) {
       console.warn("hypa_cleanup failed, doing local cleanup:", e);
@@ -220,6 +226,7 @@
     hypaMemoryCount = hypaSummaries.length;
     await saveHypa();
     hypaActionStatus = `removed ${before - hypaSummaries.length} empty summaries (local)`;
+    setTimeout(() => { hypaActionStatus = ""; }, STATUS_CLEAR_MS);
   }
 
   // ------- Helper API exposed via onReady -------
@@ -382,6 +389,8 @@
         <p style="font-size: 12px; color: var(--fg2);">No summaries yet. They'll appear here after auto-summarization or import.</p>
       {:else}
         <div style="display: flex; flex-direction: column; gap: 8px;">
+          <!-- Key uses array index because summaries lack a stable unique id.
+               Acceptable: delete/reorder triggers full re-render of shifted items. -->
           {#each hypaSummaries as summary, idx (idx)}
             <div style="border: 1px solid var(--bg4, #333); border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px;">
               <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">

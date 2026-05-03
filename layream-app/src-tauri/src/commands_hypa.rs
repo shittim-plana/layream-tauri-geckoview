@@ -8,6 +8,7 @@
 //! without precision conversion. This is intentional — see §3-A (no demote/promote).
 
 use layream_core::gca::{self, GCA_OAUTH_CLIENT_ID};
+use layream_core::mistral;
 use layream_core::vertex_api::{
     self, Content, GenerateRequest, GenerationConfig, Part, SafetySetting,
 };
@@ -203,9 +204,10 @@ async fn refresh_token(
 /// Invoke a provider with a non-streaming request. Returns the generated text.
 ///
 /// Provider selection from settings:
-/// - `provider`: "vertex" | "gca" (required)
+/// - `provider`: "vertex" | "gca" | "mistral" (required)
 /// - `model`: model id (required)
 /// - `projectId`, `region`: required when provider == "vertex"
+/// - `apiKey`: required when provider == "mistral"
 /// - `temperature`, `maxTokens`, `topP`, `topK`: optional generation config
 async fn invoke_provider(
     settings: &Value,
@@ -281,8 +283,57 @@ async fn invoke_provider(
                 .await
                 .map_err(|e| e.to_string())
         }
+        "mistral" => {
+            let api_key = settings_str(settings, "apiKey")?;
+
+            // Convert Vertex Content → Mistral ChatMessage. Each Content has
+            // role + parts[].text; we concatenate part texts (hypa only ever
+            // sends a single part per content, but concatenation is lossless).
+            let messages: Vec<mistral::ChatMessage> = contents
+                .iter()
+                .map(|c| mistral::ChatMessage {
+                    role: c.role.clone(),
+                    content: c
+                        .parts
+                        .iter()
+                        .filter_map(|p| p.text.as_deref())
+                        .collect::<Vec<_>>()
+                        .join(""),
+                    tool_calls: None,
+                    tool_call_id: None,
+                })
+                .collect();
+
+            let mistral_request = mistral::ChatRequest {
+                model: model.to_string(),
+                messages,
+                temperature: Some(temperature),
+                top_p,
+                max_tokens: Some(max_tokens),
+                stream: Some(false),
+                frequency_penalty: None,
+                presence_penalty: None,
+                stop: None,
+                random_seed: None,
+                response_format: None,
+                reasoning_effort: None,
+                tools: None,
+                tool_choice: None,
+            };
+
+            let response = mistral::chat(&client, api_key, &mistral_request)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            response
+                .choices
+                .first()
+                .and_then(|c| c.message.as_ref())
+                .map(|m| m.content.clone())
+                .ok_or_else(|| "No response content from Mistral".to_string())
+        }
         other => Err(format!(
-            "settings.provider must be 'vertex' or 'gca', got '{}'",
+            "settings.provider must be 'vertex', 'gca', or 'mistral', got '{}'",
             other
         )),
     }

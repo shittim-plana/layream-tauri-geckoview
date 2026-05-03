@@ -86,6 +86,9 @@
   });
 
   // --- Logging helper ---
+  // `turn` is a 1-based loop index for per-turn events, or `null` for FSM-level
+  // events (Started, Paused, Resumed, Stopped, Completed, Halted) that are not
+  // associated with any specific turn.
   function log(turn, status) {
     autopilotLog = [...autopilotLog, { turn, status, time: new Date().toLocaleTimeString() }];
   }
@@ -94,34 +97,36 @@
   function startAutopilot() {
     if (!isStopped) return;
     if (!chatApi?.sendChatMessage) {
-      autopilotLog = [{ turn: 0, status: "Chat not ready", time: new Date().toLocaleTimeString() }];
+      autopilotLog = [{ turn: null, status: "Chat not ready", time: new Date().toLocaleTimeString() }];
       return;
     }
     if (autopilotStructuredEnabled && autopilotSchemaError) {
-      log(0, `Cannot start: ${autopilotSchemaError}`);
+      log(null, `Cannot start: ${autopilotSchemaError}`);
       return;
     }
-    autopilotLog = [{ turn: 0, status: "Started", time: new Date().toLocaleTimeString() }];
+    autopilotLog = [{ turn: null, status: "Started", time: new Date().toLocaleTimeString() }];
     autopilotState = "running";
-    runAutopilotLoop(); // fire-and-forget; loop ends when state becomes "stopped"
+    // fire-and-forget; loop ends when state becomes "stopped".
+    // .catch guards against synchronous throws surfacing as unhandled rejections.
+    runAutopilotLoop().catch((e) => log(null, "Loop crash: " + e));
   }
 
   function pauseAutopilot() {
     if (!isRunning) return;
     autopilotState = "paused";
-    log(0, "Paused");
+    log(null, "Paused");
   }
 
   function resumeAutopilot() {
     if (!isPaused) return;
     autopilotState = "running";
-    log(0, "Resumed");
+    log(null, "Resumed");
   }
 
   function stopAutopilot() {
     if (isStopped) return;
     autopilotState = "stopped";
-    log(0, "Stopped by user");
+    log(null, "Stopped by user");
   }
 
   // --- Generation arg builder ---
@@ -181,6 +186,7 @@
     // make the bound explicit; §1-E: NaN/negative/>MAX are not valid inputs).
     // `| 0` coerces NaN/floats to int; Math.max/min then clamps the range.
     const turns = Math.max(TURN_MIN, Math.min(TURN_MAX, autopilotTurns | 0));
+    let errored = false;
     for (let turn = 1; turn <= turns; turn++) {
       // Check FSM at top of every turn (§2-A: pause boundary).
       if (!(await waitWhilePaused())) break;
@@ -210,13 +216,14 @@
         log(turn, `Response: ${(response || "").length} chars`);
       } catch (e) {
         log(turn, `Error: ${e}`);
+        errored = true;
         break;
       }
     }
 
-    // Natural completion or break: drain to "stopped" unless already stopped.
+    // Natural completion or error break: drain to "stopped" unless already stopped.
     if (autopilotState !== "stopped") {
-      log(0, "Completed");
+      log(null, errored ? "Halted on error" : "Completed");
       autopilotState = "stopped";
     }
   }

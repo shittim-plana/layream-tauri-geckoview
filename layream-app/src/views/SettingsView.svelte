@@ -159,7 +159,7 @@
   async function fetchVertexModels() {
     vertexFetching = true;
     try {
-      const result = await invoke("vertex_list_models", { accessToken: "", region: vertexRegion });
+      const result = await invoke("vertex_list_models", { region: vertexRegion });
       if (result?.length) vertexFetchedModels = result;
     } catch (e) { console.warn("Failed to fetch Vertex models:", e); }
     vertexFetching = false;
@@ -234,7 +234,7 @@
     if (!mistralKey) return;
     mistralFetching = true;
     try {
-      const result = await invoke("mistral_list_models", { apiKey: mistralKey });
+      const result = await invoke("mistral_list_models", { api_key: mistralKey });
       if (result?.length) mistralModels = result.map(m => m.id).sort();
     } catch (e) { console.warn("Failed to fetch Mistral models:", e); }
     mistralFetching = false;
@@ -256,7 +256,9 @@
     clearTimeout(saveTimeout);
     saveTimeout = setTimeout(async () => {
       try {
-        await invoke("cmd_save_settings", { settings: collectSettings() });
+        const existing = await invoke("cmd_load_settings") || {};
+        const merged = { ...existing, ...collectSettings() };
+        await invoke("cmd_save_settings", { settings: merged });
       } catch (e) { console.warn("Failed to save settings:", e); }
     }, 500);
   }
@@ -273,21 +275,21 @@
 
   function applySettings(s) {
     if (!s || typeof s !== "object") return;
-    if (s.chatProvider) chatProvider = s.chatProvider;
-    if (s.summaryProvider) summaryProvider = s.summaryProvider;
-    if (s.embeddingProvider) embeddingProvider = s.embeddingProvider;
-    if (s.vertexProjectId) vertexProjectId = s.vertexProjectId;
-    if (s.vertexRegion) vertexRegion = s.vertexRegion;
-    if (s.vertexModel) vertexModel = s.vertexModel;
-    if (s.vertexEmbeddingModel) vertexEmbeddingModel = s.vertexEmbeddingModel;
+    if (s.chatProvider !== undefined) chatProvider = s.chatProvider;
+    if (s.summaryProvider !== undefined) summaryProvider = s.summaryProvider;
+    if (s.embeddingProvider !== undefined) embeddingProvider = s.embeddingProvider;
+    if (s.vertexProjectId !== undefined) vertexProjectId = s.vertexProjectId;
+    if (s.vertexRegion !== undefined) vertexRegion = s.vertexRegion;
+    if (s.vertexModel !== undefined) vertexModel = s.vertexModel;
+    if (s.vertexEmbeddingModel !== undefined) vertexEmbeddingModel = s.vertexEmbeddingModel;
     if (s.vertexConfig) vertexConfig = { ...vertexConfig, ...s.vertexConfig };
-    if (s.gcaModel) gcaModel = s.gcaModel;
+    if (s.gcaModel !== undefined) gcaModel = s.gcaModel;
     if (s.gcaConfig) gcaConfig = { ...gcaConfig, ...s.gcaConfig };
-    if (s.mistralKey) mistralKey = s.mistralKey;
-    if (s.mistralModel) mistralModel = s.mistralModel;
+    if (s.mistralKey !== undefined) mistralKey = s.mistralKey;
+    if (s.mistralModel !== undefined) mistralModel = s.mistralModel;
     if (s.mistralConfig) mistralConfig = { ...mistralConfig, ...s.mistralConfig };
-    if (s.voyageKey) voyageKey = s.voyageKey;
-    if (s.voyageModel) voyageModel = s.voyageModel;
+    if (s.voyageKey !== undefined) voyageKey = s.voyageKey;
+    if (s.voyageModel !== undefined) voyageModel = s.voyageModel;
   }
 
   onMount(async () => {
@@ -296,7 +298,7 @@
       applySettings(saved);
     } catch (e) { console.warn("Failed to load settings:", e); }
     checkVertexStatus();
-    const gcaSt = await checkGcaStatus();
+    await checkGcaStatus();
     if (gcaStatus?.connected && !gcaStatus?.expired) {
       loadGcaProfile();
     }
@@ -522,7 +524,7 @@
       <div class="field">
         <label class="label">Media Resolution</label>
         <select class="select" bind:value={gcaConfig.media_resolution} onchange={scheduleSettingsSave}>
-          <option value={undefined}>Default</option>
+          <option value="">Default</option>
           <option value="media_resolution_low">Low</option>
           <option value="media_resolution_medium">Medium</option>
           <option value="media_resolution_high">High</option>
@@ -611,7 +613,7 @@
       <div class="field">
         <label class="label">Reasoning Effort</label>
         <select class="select" bind:value={mistralConfig.reasoning_effort} onchange={scheduleSettingsSave}>
-          <option value={undefined}>None</option>
+          <option value="">None</option>
           <option value="low">Low</option>
           <option value="medium">Medium</option>
           <option value="high">High</option>

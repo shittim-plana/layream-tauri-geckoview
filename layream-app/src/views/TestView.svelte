@@ -9,6 +9,7 @@
   let chatInput = $state("");
   let streaming = $state(false);
   let streamingText = $state("");
+  let chatContainer;
   let unlisten;
 
   onMount(async () => {
@@ -20,9 +21,41 @@
         });
       } catch (e) { console.warn("Event listen failed:", e); }
     }
+    // Load persisted HyPA settings
+    try {
+      const saved = await invoke("cmd_load_settings");
+      if (saved?.hypa) {
+        const h = saved.hypa;
+        if (h.enabled !== undefined) hypaEnabled = h.enabled;
+        if (h.summaryModel !== undefined) hypaSummaryModel = h.summaryModel;
+        if (h.summaryTemp !== undefined) hypaSummaryTemp = h.summaryTemp;
+        if (h.summaryPrompt !== undefined) hypaSummaryPrompt = h.summaryPrompt;
+        if (h.summaryUnit !== undefined) hypaSummaryUnit = h.summaryUnit;
+        if (h.embeddingProvider !== undefined) hypaEmbeddingProvider = h.embeddingProvider;
+        if (h.embeddingModel !== undefined) hypaEmbeddingModel = h.embeddingModel;
+        if (h.similarRatio !== undefined) hypaSimilarRatio = h.similarRatio;
+      }
+      hypaSettingsLoaded = true;
+    } catch (e) {
+      console.warn("Failed to load HyPA settings:", e);
+      hypaSettingsLoaded = true;
+    }
   });
 
-  onDestroy(() => { if (unlisten) unlisten(); });
+  onDestroy(() => {
+    if (unlisten) unlisten();
+    clearTimeout(hypaSettingsSaveTimeout);
+  });
+
+  $effect(() => {
+    messages;
+    streamingText;
+    if (chatContainer) {
+      requestAnimationFrame(() => {
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+      });
+    }
+  });
 
   async function sendMessage() {
     if (!chatInput.trim() || streaming) return;
@@ -46,15 +79,15 @@
         result = await invoke("chat_vertex", {
           messages: msgs,
           model: settings.vertexModel || "gemini-2.5-flash",
-          projectId: settings.vertexProjectId || "",
+          project_id: settings.vertexProjectId || "",
           region: settings.vertexRegion || "us-central1",
           temperature: c.temperature ?? 0.9,
-          maxTokens: c.max_tokens ?? 8192,
-          topP: c.top_p ?? null,
-          topK: c.top_k ?? null,
-          thinkingBudget: c.thinking_budget ?? null,
-          toolsGoogleSearch: c.tools_googleSearch ?? false,
-          toolsCodeExecution: c.tools_code_execution ?? false,
+          max_tokens: c.max_tokens ?? 8192,
+          top_p: c.top_p ?? null,
+          top_k: c.top_k ?? null,
+          thinking_budget: c.thinking_budget ?? null,
+          tools_google_search: c.tools_googleSearch ?? false,
+          tools_code_execution: c.tools_code_execution ?? false,
         });
       } else if (provider === "gca") {
         const c = settings.gcaConfig || {};
@@ -62,27 +95,27 @@
           messages: msgs,
           model: settings.gcaModel || "gemini-2.5-flash",
           temperature: c.temperature ?? 0.9,
-          maxTokens: c.max_tokens ?? 8192,
-          topP: c.top_p ?? null,
-          topK: c.top_k ?? null,
-          thinkingLevel: c.thinking_level ?? null,
-          toolsGoogleSearch: c.tools_google_search ?? false,
-          toolsGoogleMaps: c.tools_googleMaps ?? false,
-          toolsUrlContext: c.tools_url_context ?? false,
-          toolsCodeExecution: c.tools_code_execution ?? false,
+          max_tokens: c.max_tokens ?? 8192,
+          top_p: c.top_p ?? null,
+          top_k: c.top_k ?? null,
+          thinking_level: c.thinking_level ?? null,
+          tools_google_search: c.tools_google_search ?? false,
+          tools_google_maps: c.tools_googleMaps ?? false,
+          tools_url_context: c.tools_url_context ?? false,
+          tools_code_execution: c.tools_code_execution ?? false,
         });
       } else if (provider === "mistral") {
         const c = settings.mistralConfig || {};
         result = await invoke("chat_mistral", {
           messages: msgs,
           model: settings.mistralModel || "mistral-small-2603",
-          apiKey: settings.mistralKey || "",
+          api_key: settings.mistralKey || "",
           temperature: c.temperature ?? 0.9,
-          maxTokens: c.max_tokens ?? 8192,
-          topP: c.top_p ?? null,
-          frequencyPenalty: c.frequency_penalty ?? null,
-          presencePenalty: c.presence_penalty ?? null,
-          reasoningEffort: c.reasoning_effort ?? null,
+          max_tokens: c.max_tokens ?? 8192,
+          top_p: c.top_p ?? null,
+          frequency_penalty: c.frequency_penalty ?? null,
+          presence_penalty: c.presence_penalty ?? null,
+          reasoning_effort: c.reasoning_effort ?? null,
         });
       }
 
@@ -91,7 +124,7 @@
         messages = [...messages, { role: "char", text: responseText, time: new Date().toLocaleTimeString() }];
       }
     } catch (e) {
-      messages = [...messages, { role: "char", text: `Error: ${e}`, time: new Date().toLocaleTimeString() }];
+      messages = [...messages, { role: "error", text: `Error: ${e}`, time: new Date().toLocaleTimeString() }];
     }
     streaming = false;
     streamingText = "";
@@ -137,6 +170,38 @@
   let hypaSimilarRatio = $state(0.7);
   let hypaMemoryCount = $state(0);
   let hypaSummaries = $state([]);
+  let hypaSettingsLoaded = $state(false);
+  let hypaSettingsSaveTimeout;
+
+  function scheduleHypaSettingsSave() {
+    clearTimeout(hypaSettingsSaveTimeout);
+    hypaSettingsSaveTimeout = setTimeout(async () => {
+      try {
+        const existing = await invoke("cmd_load_settings") || {};
+        existing.hypa = {
+          enabled: hypaEnabled,
+          summaryModel: hypaSummaryModel,
+          summaryTemp: hypaSummaryTemp,
+          summaryPrompt: hypaSummaryPrompt,
+          summaryUnit: hypaSummaryUnit,
+          embeddingProvider: hypaEmbeddingProvider,
+          embeddingModel: hypaEmbeddingModel,
+          similarRatio: hypaSimilarRatio,
+        };
+        await invoke("cmd_save_settings", { settings: existing });
+      } catch (e) { console.warn("Failed to save HyPA settings:", e); }
+    }, 500);
+  }
+
+  $effect(() => {
+    // Track all HyPA config values
+    hypaEnabled; hypaSummaryModel; hypaSummaryTemp; hypaSummaryPrompt;
+    hypaSummaryUnit; hypaEmbeddingProvider; hypaEmbeddingModel; hypaSimilarRatio;
+    // Only save after initial load to avoid overwriting with defaults
+    if (hypaSettingsLoaded) {
+      scheduleHypaSettingsSave();
+    }
+  });
 
   async function loadHypa() {
     try {
@@ -215,8 +280,8 @@
     try {
       previewText = await invoke("evaluate_cbs", {
         input: "{{// Prompt preview requires a loaded preset}}",
-        charName: "Character",
-        userName: "User",
+        char_name: "Character",
+        user_name: "User",
       });
     } catch (e) {
       previewText = `Error: ${e}`;
@@ -238,7 +303,7 @@
   <!-- Chat Tab -->
   {#if subTab === "chat"}
     <div style="display: flex; flex-direction: column; height: calc(100dvh - 180px);">
-      <div style="flex: 1; overflow-y: auto; padding-bottom: 12px;">
+      <div bind:this={chatContainer} style="flex: 1; overflow-y: auto; padding-bottom: 12px;">
         {#if messages.length === 0}
           <div class="empty-state">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">

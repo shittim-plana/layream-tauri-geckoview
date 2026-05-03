@@ -22,6 +22,8 @@ pub struct GenerateRequest {
 pub enum VertexTool {
     GoogleSearch(serde_json::Map<String, Value>),
     CodeExecution(serde_json::Map<String, Value>),
+    GoogleMaps(serde_json::Map<String, Value>),
+    UrlContext(serde_json::Map<String, Value>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

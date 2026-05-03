@@ -34,9 +34,7 @@
     loading = true;
     error = "";
     try {
-      error = `invoking load_preset: ${name} (${data.length} bytes)...`;
       const result = await invoke("load_preset", { name, data });
-      error = `result: ${result ? "ok" : "null"}, keys: ${result ? Object.keys(result).join(",") : "none"}`;
       if (result) {
         preset = result;
         presetName = name;
@@ -103,7 +101,7 @@
     if (!preset?.promptTemplate?.[editingIndex]) return;
     const text = getItemText(preset.promptTemplate[editingIndex]);
     try {
-      previewText = await invoke("evaluate_cbs", { input: text, charName: "Character", userName: "User" });
+      previewText = await invoke("evaluate_cbs", { input: text, char_name: "Character", user_name: "User" });
     } catch (e) {
       previewText = `Error: ${e}`;
     }
@@ -225,20 +223,20 @@
     {#if subTab === "regex"}
       <div class="card">
         <div class="card-header">
-          <span class="card-title">Regex Scripts ({preset.customscript?.length || 0})</span>
+          <span class="card-title">Regex Scripts ({preset.regex?.length || 0})</span>
           <button class="btn btn-sm btn-primary" onclick={() => {
-            if (!preset.customscript) preset.customscript = [];
-            preset.customscript = [...preset.customscript, { comment: "", in: "", out: "", type: "editinput" }];
+            if (!preset.regex) preset.regex = [];
+            preset.regex = [...preset.regex, { comment: "", in: "", out: "", type: "editinput" }];
           }}>+ Add</button>
         </div>
-        {#if preset.customscript?.length}
+        {#if preset.regex?.length}
           <div class="card-body">
-            {#each preset.customscript as rule, i}
+            {#each preset.regex as rule, i}
               <div style="padding: 10px 0; border-bottom: 1px solid var(--bg4);">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
                   <input class="input" style="flex:1;" type="text" bind:value={rule.comment} placeholder="Comment" />
                   <button class="btn-icon" style="color: var(--red);" onclick={() => {
-                    preset.customscript = preset.customscript.filter((_, j) => j !== i);
+                    preset.regex = preset.regex.filter((_, j) => j !== i);
                   }}>✕</button>
                 </div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
@@ -329,10 +327,10 @@
             <label class="label">Global Note</label>
             <textarea class="textarea" rows="3" bind:value={preset.globalNote}></textarea>
           </div>
-          {#if preset.assistantPrefill !== undefined}
+          {#if preset.promptSettings?.assistantPrefill !== undefined}
             <div class="field">
               <label class="label">Assistant Prefill</label>
-              <textarea class="textarea" rows="2" bind:value={preset.assistantPrefill}></textarea>
+              <textarea class="textarea" rows="2" bind:value={preset.promptSettings.assistantPrefill}></textarea>
             </div>
           {/if}
         </div>

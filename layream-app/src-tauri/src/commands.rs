@@ -104,7 +104,8 @@ pub fn evaluate_cbs(input: String, char_name: String, user_name: String) -> Stri
 
 fn build_safety_settings() -> Vec<SafetySetting> {
     ["HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH",
-     "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"]
+     "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT",
+     "HARM_CATEGORY_CIVIC_INTEGRITY"]
         .iter()
         .map(|cat| SafetySetting {
             category: cat.to_string(),
@@ -138,18 +139,25 @@ fn messages_to_chat_messages(messages: &[Value]) -> Vec<mistral::ChatMessage> {
     }).collect()
 }
 
+const MAX_LOGS: usize = 200;
+
 fn log_api_call(log_state: &State<'_, RequestLogState>, provider: &str, model: &str, status: &str, duration_ms: u128) {
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    log_state.logs.lock().unwrap().push(serde_json::json!({
+    let mut logs = log_state.logs.lock().unwrap();
+    logs.push(serde_json::json!({
         "timestamp": timestamp,
         "provider": provider,
         "model": model,
         "status": status,
         "duration_ms": duration_ms,
     }));
+    if logs.len() > MAX_LOGS {
+        let excess = logs.len() - MAX_LOGS;
+        logs.drain(..excess);
+    }
 }
 
 #[tauri::command]
@@ -272,14 +280,10 @@ pub async fn chat_gca(
         tools.push(VertexTool::GoogleSearch(serde_json::Map::new()));
     }
     if tools_google_maps {
-        let mut m = serde_json::Map::new();
-        m.insert("googleMaps".to_string(), Value::Object(serde_json::Map::new()));
-        tools.push(VertexTool::GoogleSearch(m));
+        tools.push(VertexTool::GoogleMaps(serde_json::Map::new()));
     }
     if tools_url_context {
-        let mut m = serde_json::Map::new();
-        m.insert("urlContext".to_string(), Value::Object(serde_json::Map::new()));
-        tools.push(VertexTool::GoogleSearch(m));
+        tools.push(VertexTool::UrlContext(serde_json::Map::new()));
     }
     if tools_code_execution {
         tools.push(VertexTool::CodeExecution(serde_json::Map::new()));
@@ -474,13 +478,27 @@ pub fn gca_oauth_status(state: State<'_, AuthState>) -> Value {
 }
 
 #[tauri::command]
-pub async fn vertex_list_projects(state: State<'_, AuthState>) -> Result<Value, String> {
-    let token = {
-        let tokens = state.vertex_tokens.lock().unwrap();
-        tokens.as_ref().ok_or("Not connected")?.access_token.clone()
+pub async fn vertex_list_projects(
+    state: State<'_, AuthState>,
+    app: tauri::AppHandle,
+) -> Result<Value, String> {
+    let tokens = {
+        let guard = state.vertex_tokens.lock().unwrap();
+        guard.clone().ok_or("Not connected")?
     };
     let client = reqwest::Client::new();
-    let projects = layream_core::vertex_auth::list_gcp_projects(&client, &token)
+    let creds = OAuthCredentials {
+        client_id: VERTEX_CLIENT_ID.to_string(),
+        client_secret: None,
+        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
+    };
+    let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
+        .await.map_err(|e| e.to_string())?;
+    if valid_tokens.access_token != tokens.access_token {
+        *state.vertex_tokens.lock().unwrap() = Some(valid_tokens.clone());
+        state.persist_tokens(&app);
+    }
+    let projects = layream_core::vertex_auth::list_gcp_projects(&client, &valid_tokens.access_token)
         .await
         .map_err(|e| e.to_string())?;
     serde_json::to_value(&projects).map_err(|e| e.to_string())
@@ -512,9 +530,28 @@ pub async fn mistral_list_models(api_key: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn vertex_list_models(access_token: String, region: String) -> Result<Value, String> {
+pub async fn vertex_list_models(
+    region: String,
+    state: State<'_, AuthState>,
+    app: tauri::AppHandle,
+) -> Result<Value, String> {
+    let tokens = {
+        let guard = state.vertex_tokens.lock().unwrap();
+        guard.clone().ok_or("Vertex AI not connected")?
+    };
     let client = reqwest::Client::new();
-    let models = layream_core::vertex_api::list_models(&client, &access_token, &region)
+    let creds = OAuthCredentials {
+        client_id: VERTEX_CLIENT_ID.to_string(),
+        client_secret: None,
+        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
+    };
+    let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
+        .await.map_err(|e| e.to_string())?;
+    if valid_tokens.access_token != tokens.access_token {
+        *state.vertex_tokens.lock().unwrap() = Some(valid_tokens.clone());
+        state.persist_tokens(&app);
+    }
+    let models = layream_core::vertex_api::list_models(&client, &valid_tokens.access_token, &region)
         .await
         .map_err(|e| e.to_string())?;
     serde_json::to_value(&models).map_err(|e| e.to_string())
@@ -620,24 +657,52 @@ pub async fn embed_voyage(
 }
 
 #[tauri::command]
-pub async fn gca_load_code_assist(state: State<'_, AuthState>) -> Result<String, String> {
-    let token = {
+pub async fn gca_load_code_assist(
+    state: State<'_, AuthState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let tokens = {
         let guard = state.gca_tokens.lock().unwrap();
-        guard.as_ref().ok_or("GCA not connected")?.access_token.clone()
+        guard.clone().ok_or("GCA not connected")?
     };
     let client = reqwest::Client::new();
-    gca::load_code_assist(&client, &token)
+    let creds = OAuthCredentials {
+        client_id: GCA_OAUTH_CLIENT_ID.to_string(),
+        client_secret: None,
+        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
+    };
+    let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
+        .await.map_err(|e| e.to_string())?;
+    if valid_tokens.access_token != tokens.access_token {
+        *state.gca_tokens.lock().unwrap() = Some(valid_tokens.clone());
+        state.persist_tokens(&app);
+    }
+    gca::load_code_assist(&client, &valid_tokens.access_token)
         .await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn gca_check_opt_out(state: State<'_, AuthState>) -> Result<bool, String> {
-    let token = {
+pub async fn gca_check_opt_out(
+    state: State<'_, AuthState>,
+    app: tauri::AppHandle,
+) -> Result<bool, String> {
+    let tokens = {
         let guard = state.gca_tokens.lock().unwrap();
-        guard.as_ref().ok_or("GCA not connected")?.access_token.clone()
+        guard.clone().ok_or("GCA not connected")?
     };
     let client = reqwest::Client::new();
-    gca::check_and_opt_out(&client, &token)
+    let creds = OAuthCredentials {
+        client_id: GCA_OAUTH_CLIENT_ID.to_string(),
+        client_secret: None,
+        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
+    };
+    let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
+        .await.map_err(|e| e.to_string())?;
+    if valid_tokens.access_token != tokens.access_token {
+        *state.gca_tokens.lock().unwrap() = Some(valid_tokens.clone());
+        state.persist_tokens(&app);
+    }
+    gca::check_and_opt_out(&client, &valid_tokens.access_token)
         .await.map_err(|e| e.to_string())
 }
 

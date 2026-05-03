@@ -8,6 +8,7 @@
   let presetName = $state("");
   let loading = $state(false);
   let error = $state("");
+  let status = $state("");
 
   let subTab = $state("prompts");
   let editingIndex = $state(-1);
@@ -65,18 +66,9 @@
         // Try Tauri fs plugin (works on Android where Blob URLs are blocked)
         try {
           const { writeFile, BaseDirectory } = await import("@tauri-apps/plugin-fs");
-          try {
-            await writeFile(fileName, data, { baseDir: BaseDirectory.Download });
-            error = `Saved to Downloads/${fileName}`;
-          } catch (downloadErr) {
-            // Fallback: try AppData if Download fails (e.g. Android permissions)
-            try {
-              await writeFile(fileName, data, { baseDir: BaseDirectory.AppData });
-              error = `Saved to AppData/${fileName}`;
-            } catch (appDataErr) {
-              error = `Export failed: Download: ${String(downloadErr)}, AppData: ${String(appDataErr)}`;
-            }
-          }
+          await writeFile(fileName, data, { baseDir: BaseDirectory.Download });
+          status = `Saved to Downloads/${fileName}`;
+          setTimeout(() => { if (status === `Saved to Downloads/${fileName}`) status = ""; }, 3000);
         } catch (fsErr) {
           // Fallback: Blob URL download (works on desktop)
           const blob = new Blob([data]);
@@ -98,6 +90,7 @@
     presetName = "";
     editingIndex = -1;
     error = "";
+    status = "";
   }
 
   function getItemText(item) {
@@ -137,8 +130,8 @@
     if (!preset) return;
     try {
       await invoke("cmd_save_current_preset", { preset });
-      error = "Saved!";
-      setTimeout(() => { if (error === "Saved!") error = ""; }, 2000);
+      status = "Saved!";
+      setTimeout(() => { if (status === "Saved!") status = ""; }, 2000);
     } catch (e) {
       error = `Save failed: ${String(e)}`;
     }
@@ -147,7 +140,7 @@
   onMount(async () => {
     try {
       const saved = await invoke("cmd_load_current_preset");
-      if (saved && typeof saved === "object" && saved.promptTemplate) {
+      if (saved && typeof saved === "object" && Object.keys(saved).length > 0) {
         preset = saved;
         presetName = saved.name || "Saved Preset";
       }
@@ -161,6 +154,12 @@
   {#if error}
     <div class="card" style="border-color: var(--red); color: var(--red);">
       <div class="card-body">{error}</div>
+    </div>
+  {/if}
+
+  {#if status}
+    <div class="card" style="border-color: var(--accent); color: var(--accent);">
+      <div class="card-body">{status}</div>
     </div>
   {/if}
 

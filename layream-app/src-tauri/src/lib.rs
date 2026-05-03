@@ -58,6 +58,7 @@ pub fn run() {
             commands::cmd_save_session,
             commands::cmd_load_session,
             commands::parse_risum,
+            commands::generate_user_message,
         ])
         .run(tauri::generate_context!());
 

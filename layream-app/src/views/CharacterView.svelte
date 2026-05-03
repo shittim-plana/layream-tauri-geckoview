@@ -312,6 +312,7 @@
             label=".risum 모듈 불러오기"
             extensions=".risum"
             onfile={handleModuleFile}
+            disabled={moduleLoading}
           />
           {#if moduleLoading}
             <div class="spinner" style="margin-top: 8px;"></div>

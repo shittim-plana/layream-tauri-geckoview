@@ -23,7 +23,6 @@ use crate::persistence;
 pub struct AuthState {
     pub vertex_pkce: Mutex<Option<PkceChallenge>>,
     pub vertex_tokens: Mutex<Option<Tokens>>,
-    pub gca_pkce: Mutex<Option<PkceChallenge>>,
     pub gca_tokens: Mutex<Option<Tokens>>,
 }
 
@@ -32,7 +31,6 @@ impl Default for AuthState {
         Self {
             vertex_pkce: Mutex::new(None),
             vertex_tokens: Mutex::new(None),
-            gca_pkce: Mutex::new(None),
             gca_tokens: Mutex::new(None),
         }
     }
@@ -58,9 +56,13 @@ impl AuthState {
 }
 
 #[tauri::command]
-pub fn load_preset(name: String, data: Vec<u8>) -> Result<Value, String> {
-    let p = preset::read_preset(&name, &data).map_err(|e| e.to_string())?;
-    serde_json::to_value(&p).map_err(|e| e.to_string())
+pub async fn load_preset(name: String, data: Vec<u8>) -> Result<Value, String> {
+    tokio::task::spawn_blocking(move || {
+        let p = preset::read_preset(&name, &data).map_err(|e| e.to_string())?;
+        serde_json::to_value(&p).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -78,30 +80,38 @@ pub fn export_preset(preset: Value, format: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub fn load_character(name: String, data: Vec<u8>) -> Result<Value, String> {
-    let ch = charx::read_character(&name, &data).map_err(|e| e.to_string())?;
-    let card_json = match &ch.card {
-        Some(charx::CardData::V2(card)) => serde_json::to_value(card).ok(),
-        Some(charx::CardData::OldTavern(card)) => serde_json::to_value(card).ok(),
-        None => None,
-    };
-    let asset_list: Vec<Value> = ch.assets.iter().map(|(name, data)| {
-        serde_json::json!({
-            "name": name,
-            "size": data.len(),
-        })
-    }).collect();
-    Ok(serde_json::json!({
-        "card": card_json,
-        "assetCount": ch.assets.len(),
-        "assetList": asset_list,
-        "hasModule": ch.module_data.is_some(),
-    }))
+pub async fn load_character(name: String, data: Vec<u8>) -> Result<Value, String> {
+    tokio::task::spawn_blocking(move || {
+        let ch = charx::read_character(&name, &data).map_err(|e| e.to_string())?;
+        let card_json = match &ch.card {
+            Some(charx::CardData::V2(card)) => serde_json::to_value(card).ok(),
+            Some(charx::CardData::OldTavern(card)) => serde_json::to_value(card).ok(),
+            None => None,
+        };
+        let asset_list: Vec<Value> = ch.assets.iter().map(|(name, data)| {
+            serde_json::json!({
+                "name": name,
+                "size": data.len(),
+            })
+        }).collect();
+        Ok(serde_json::json!({
+            "card": card_json,
+            "assetCount": ch.assets.len(),
+            "assetList": asset_list,
+            "hasModule": ch.module_data.is_some(),
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn parse_risum(data: Vec<u8>) -> Result<Value, String> {
-    preset::parse_risum_data(&data).map_err(|e| e.to_string())
+pub async fn parse_risum(data: Vec<u8>) -> Result<Value, String> {
+    tokio::task::spawn_blocking(move || {
+        preset::parse_risum_data(&data).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -504,15 +514,13 @@ pub async fn gca_oauth_callback(
     state: State<'_, AuthState>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    let pkce = state.gca_pkce.lock().unwrap().take()
-        .ok_or("No pending PKCE challenge")?;
     let creds = OAuthCredentials {
         client_id: GCA_OAUTH_CLIENT_ID.to_string(),
-        client_secret: None,
+        client_secret: Some(GCA_OAUTH_CLIENT_SECRET.to_string()),
         redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
     };
     let client = reqwest::Client::new();
-    let tokens = vertex_auth::exchange_code(&client, &creds, &code, Some(&pkce.verifier))
+    let tokens = vertex_auth::exchange_code(&client, &creds, &code, None)
         .await
         .map_err(|e| e.to_string())?;
     *state.gca_tokens.lock().unwrap() = Some(tokens);
@@ -594,7 +602,6 @@ pub fn vertex_oauth_disconnect(state: State<'_, AuthState>, app: tauri::AppHandl
 #[tauri::command]
 pub fn gca_oauth_disconnect(state: State<'_, AuthState>, app: tauri::AppHandle) -> String {
     *state.gca_tokens.lock().unwrap() = None;
-    *state.gca_pkce.lock().unwrap() = None;
     state.persist_tokens(&app);
     "Disconnected".into()
 }
@@ -826,4 +833,170 @@ pub fn cmd_save_session(session: Value, app: tauri::AppHandle) -> Result<(), Str
 pub fn cmd_load_session(app: tauri::AppHandle) -> Result<Value, String> {
     let data_dir = persistence::get_data_dir(&app)?;
     persistence::load_session(&data_dir)
+}
+
+const USER_MSG_SYSTEM_PROMPT: &str =
+    "Given this roleplay conversation context, generate a short, natural next user message. \
+     Reply ONLY with the message text, nothing else.";
+
+const USER_MSG_MAX_TOKENS: u32 = 256;
+const USER_MSG_TEMPERATURE: f64 = 1.0;
+
+#[tauri::command]
+pub async fn generate_user_message(
+    context: Vec<Value>,
+    provider: String,
+    model: String,
+    region: Option<String>,
+    project_id: Option<String>,
+    api_key: Option<String>,
+    state: State<'_, AuthState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    match provider.as_str() {
+        "vertex" => {
+            let project_id = project_id.ok_or("project_id required for vertex")?;
+            let region = region.as_deref().unwrap_or("us-central1");
+
+            let tokens = {
+                let guard = state.vertex_tokens.lock().unwrap();
+                guard.clone().ok_or("Vertex AI not connected")?
+            };
+            let client = reqwest::Client::new();
+            let creds = OAuthCredentials {
+                client_id: VERTEX_CLIENT_ID.to_string(),
+                client_secret: None,
+                redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
+            };
+            let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
+                .await
+                .map_err(|e| e.to_string())?;
+            if valid_tokens.access_token != tokens.access_token {
+                *state.vertex_tokens.lock().unwrap() = Some(valid_tokens.clone());
+                state.persist_tokens(&app);
+            }
+
+            let request = GenerateRequest {
+                contents: messages_to_contents(&context),
+                system_instruction: Some(Content {
+                    role: "user".to_string(),
+                    parts: vec![Part {
+                        text: Some(USER_MSG_SYSTEM_PROMPT.to_string()),
+                        thought: None,
+                        inline_data: None,
+                    }],
+                }),
+                safety_settings: build_safety_settings(),
+                generation_config: GenerationConfig {
+                    max_output_tokens: USER_MSG_MAX_TOKENS,
+                    temperature: USER_MSG_TEMPERATURE,
+                    thinking_config: None,
+                    top_p: None,
+                    top_k: None,
+                },
+                tools: None,
+            };
+
+            vertex_api::generate_non_streaming(
+                &client,
+                &valid_tokens.access_token,
+                &project_id,
+                region,
+                &model,
+                &request,
+            )
+            .await
+            .map_err(|e| e.to_string())
+        }
+        "gca" => {
+            let tokens = {
+                let guard = state.gca_tokens.lock().unwrap();
+                guard.clone().ok_or("GCA not connected")?
+            };
+            let client = reqwest::Client::new();
+            let creds = OAuthCredentials {
+                client_id: GCA_OAUTH_CLIENT_ID.to_string(),
+                client_secret: None,
+                redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
+            };
+            let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
+                .await
+                .map_err(|e| e.to_string())?;
+            if valid_tokens.access_token != tokens.access_token {
+                *state.gca_tokens.lock().unwrap() = Some(valid_tokens.clone());
+                state.persist_tokens(&app);
+            }
+
+            let request = GenerateRequest {
+                contents: messages_to_contents(&context),
+                system_instruction: Some(Content {
+                    role: "user".to_string(),
+                    parts: vec![Part {
+                        text: Some(USER_MSG_SYSTEM_PROMPT.to_string()),
+                        thought: None,
+                        inline_data: None,
+                    }],
+                }),
+                safety_settings: build_safety_settings(),
+                generation_config: GenerationConfig {
+                    max_output_tokens: USER_MSG_MAX_TOKENS,
+                    temperature: USER_MSG_TEMPERATURE,
+                    thinking_config: None,
+                    top_p: None,
+                    top_k: None,
+                },
+                tools: None,
+            };
+
+            gca::generate_non_streaming(
+                &client,
+                &valid_tokens.access_token,
+                &model,
+                &request,
+            )
+            .await
+            .map_err(|e| e.to_string())
+        }
+        "mistral" => {
+            let api_key = api_key.ok_or("api_key required for mistral")?;
+
+            let mut messages = messages_to_chat_messages(&context);
+            messages.insert(0, mistral::ChatMessage {
+                role: "system".to_string(),
+                content: USER_MSG_SYSTEM_PROMPT.to_string(),
+                tool_calls: None,
+                tool_call_id: None,
+            });
+
+            let request = mistral::ChatRequest {
+                model: model.clone(),
+                messages,
+                temperature: Some(USER_MSG_TEMPERATURE),
+                top_p: None,
+                max_tokens: Some(USER_MSG_MAX_TOKENS),
+                stream: Some(false),
+                frequency_penalty: None,
+                presence_penalty: None,
+                stop: None,
+                random_seed: None,
+                response_format: None,
+                reasoning_effort: None,
+                tools: None,
+                tool_choice: None,
+            };
+
+            let client = reqwest::Client::new();
+            let response = mistral::chat(&client, &api_key, &request)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            response
+                .choices
+                .first()
+                .and_then(|c| c.message.as_ref())
+                .map(|m| m.content.clone())
+                .ok_or_else(|| "No response content from Mistral".to_string())
+        }
+        other => Err(format!("Unsupported provider: {}", other)),
+    }
 }

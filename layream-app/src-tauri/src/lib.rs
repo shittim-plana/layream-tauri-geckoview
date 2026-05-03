@@ -1,6 +1,7 @@
 use tauri::Manager;
 
 mod commands;
+mod commands_hypa;
 mod persistence;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

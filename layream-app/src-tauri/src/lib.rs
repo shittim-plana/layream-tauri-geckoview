@@ -52,8 +52,6 @@ pub fn run() {
             commands::embed_voyage,
             commands::gca_load_code_assist,
             commands::gca_check_opt_out,
-            commands::cmd_save_hypa,
-            commands::cmd_load_hypa,
             commands::open_url,
             commands::cmd_save_current_preset,
             commands::cmd_load_current_preset,

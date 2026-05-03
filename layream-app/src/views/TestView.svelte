@@ -40,11 +40,17 @@
       console.warn("Failed to load HyPA settings:", e);
       hypaSettingsLoaded = true;
     }
+    // Load persisted chat session
+    try {
+      const savedSession = await invoke("cmd_load_session");
+      if (savedSession?.messages?.length) messages = savedSession.messages;
+    } catch (e) { console.warn("Failed to load session:", e); }
   });
 
   onDestroy(() => {
     if (unlisten) unlisten();
     clearTimeout(hypaSettingsSaveTimeout);
+    clearTimeout(sessionSaveTimeout);
   });
 
   $effect(() => {
@@ -150,7 +156,10 @@
     return /Android|iPhone|iPad/i.test(navigator.userAgent);
   }
 
-  function clearChat() { messages = []; }
+  function clearChat() {
+    messages = [];
+    invoke("cmd_save_session", { session: { messages: [] } }).catch(() => {});
+  }
 
   // --- Autopilot ---
   let autopilotRunning = $state(false);
@@ -181,6 +190,7 @@
   let hypaSummaries = $state([]);
   let hypaSettingsLoaded = $state(false);
   let hypaSettingsSaveTimeout;
+  let sessionSaveTimeout;
 
   function scheduleHypaSettingsSave() {
     clearTimeout(hypaSettingsSaveTimeout);
@@ -209,6 +219,18 @@
     // Only save after initial load to avoid overwriting with defaults
     if (hypaSettingsLoaded) {
       scheduleHypaSettingsSave();
+    }
+  });
+
+  $effect(() => {
+    const msgCount = messages.length;
+    if (msgCount > 0) {
+      clearTimeout(sessionSaveTimeout);
+      sessionSaveTimeout = setTimeout(async () => {
+        try {
+          await invoke("cmd_save_session", { session: { messages } });
+        } catch (e) { console.warn("Session save failed:", e); }
+      }, 1000);
     }
   });
 
@@ -311,8 +333,8 @@
 
   <!-- Chat Tab -->
   {#if subTab === "chat"}
-    <div style="display: flex; flex-direction: column; height: calc(100dvh - 180px);">
-      <div bind:this={chatContainer} style="flex: 1; overflow-y: auto; padding-bottom: 12px;">
+    <div style="display: flex; flex-direction: column; height: calc(100dvh - env(safe-area-inset-top, 0px) - 184px - env(safe-area-inset-bottom, 0px));">
+      <div bind:this={chatContainer} style="flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 12px;">
         {#if messages.length === 0}
           <div class="empty-state">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -344,6 +366,9 @@
       </div>
 
       <div class="chat-input-bar">
+        {#if messages.length > 0}
+          <button class="btn btn-sm btn-secondary" onclick={clearChat} style="flex-shrink: 0; padding: 6px 10px; font-size: 11px; align-self: center;">Clear</button>
+        {/if}
         <textarea
           class="chat-input"
           rows="1"
@@ -359,12 +384,6 @@
           </svg>
         </button>
       </div>
-
-      {#if messages.length > 0}
-        <div style="flex-shrink: 0; text-align: center; padding: 4px;">
-          <button class="btn btn-sm btn-secondary" onclick={clearChat}>Clear Chat</button>
-        </div>
-      {/if}
     </div>
   {/if}
 

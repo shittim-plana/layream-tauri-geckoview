@@ -1,4 +1,5 @@
 <script>
+  import { onMount } from "svelte";
   import { invoke } from "../lib/tauri.js";
   import FileImport from "../components/FileImport.svelte";
   import CBSEditor from "../components/CBSEditor.svelte";
@@ -64,8 +65,18 @@
         // Try Tauri fs plugin (works on Android where Blob URLs are blocked)
         try {
           const { writeFile, BaseDirectory } = await import("@tauri-apps/plugin-fs");
-          await writeFile(fileName, data, { baseDir: BaseDirectory.Download });
-          error = `Saved to Downloads/${fileName}`;
+          try {
+            await writeFile(fileName, data, { baseDir: BaseDirectory.Download });
+            error = `Saved to Downloads/${fileName}`;
+          } catch (downloadErr) {
+            // Fallback: try AppData if Download fails (e.g. Android permissions)
+            try {
+              await writeFile(fileName, data, { baseDir: BaseDirectory.AppData });
+              error = `Saved to AppData/${fileName}`;
+            } catch (appDataErr) {
+              error = `Export failed: Download: ${String(downloadErr)}, AppData: ${String(appDataErr)}`;
+            }
+          }
         } catch (fsErr) {
           // Fallback: Blob URL download (works on desktop)
           const blob = new Blob([data]);
@@ -121,6 +132,29 @@
       previewText = `Error: ${e}`;
     }
   }
+
+  async function savePreset() {
+    if (!preset) return;
+    try {
+      await invoke("cmd_save_current_preset", { preset });
+      error = "Saved!";
+      setTimeout(() => { if (error === "Saved!") error = ""; }, 2000);
+    } catch (e) {
+      error = `Save failed: ${String(e)}`;
+    }
+  }
+
+  onMount(async () => {
+    try {
+      const saved = await invoke("cmd_load_current_preset");
+      if (saved && typeof saved === "object" && saved.promptTemplate) {
+        preset = saved;
+        presetName = saved.name || "Saved Preset";
+      }
+    } catch (e) {
+      console.warn("Load preset failed:", e);
+    }
+  });
 </script>
 
 <div>
@@ -149,6 +183,7 @@
       <div class="card-header">
         <span class="card-title">{presetName}</span>
         <div style="display: flex; gap: 6px;">
+          <button class="btn btn-sm btn-primary" onclick={savePreset}>Save</button>
           <button class="btn btn-sm btn-secondary" onclick={() => exportPreset("risup")}>Export .risup</button>
           <button class="btn btn-sm btn-secondary" onclick={() => exportPreset("json")}>Export .json</button>
           <button class="btn btn-sm btn-danger" onclick={closePreset}>Close</button>

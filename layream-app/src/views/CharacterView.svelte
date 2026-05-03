@@ -8,9 +8,22 @@
   let error = $state("");
   let subTab = $state("info");
   let moduleInfo = $state("");
+  let moduleParsed = $state(null);
+  let moduleError = $state("");
+  let moduleLoading = $state(false);
 
   async function handleModuleFile(name, data) {
     moduleInfo = `${name} (${(data.length / 1024).toFixed(1)} KB)`;
+    moduleError = "";
+    moduleParsed = null;
+    moduleLoading = true;
+    try {
+      const result = await invoke("parse_risum", { data });
+      moduleParsed = result;
+    } catch (e) {
+      moduleError = `parse_risum error: ${String(e)}`;
+    }
+    moduleLoading = false;
   }
 
   async function handleFile(name, data) {
@@ -42,10 +55,19 @@
     characterName = "";
     error = "";
     subTab = "info";
+    moduleParsed = null;
+    moduleInfo = "";
+    moduleError = "";
   }
 
   function cardData() {
     return character?.card?.data || character?.card || null;
+  }
+
+  function formatBytes(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 </script>
 
@@ -136,6 +158,23 @@
         </div>
       {/if}
 
+      <!-- Alternate Greetings -->
+      {#if data.alternate_greetings?.length > 0}
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Alternate Greetings ({data.alternate_greetings.length})</span>
+          </div>
+          <div class="card-body">
+            {#each data.alternate_greetings as greeting, i}
+              <div style="padding: 8px 0; {i > 0 ? 'border-top: 1px solid var(--bg4);' : ''}">
+                <label class="label" style="margin-bottom: 4px;">Greeting #{i + 1}</label>
+                <textarea class="textarea" rows="3" bind:value={data.alternate_greetings[i]}></textarea>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+
       {#if data.mes_example}
         <div class="card">
           <div class="card-header"><span class="card-title">Message Examples</span></div>
@@ -150,6 +189,38 @@
           <div class="card-header"><span class="card-title">System Prompt</span></div>
           <div class="card-body">
             <textarea class="textarea" rows="3" bind:value={data.system_prompt}></textarea>
+          </div>
+        </div>
+      {/if}
+
+      <!-- Regex Scripts (from extensions.risuai.customScripts) -->
+      {@const regexScripts = data.extensions?.risuai?.customScripts || []}
+      {#if regexScripts.length > 0}
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Regex Scripts ({regexScripts.length})</span>
+          </div>
+          <div class="card-body">
+            {#each regexScripts as script, i}
+              <div style="padding: 10px 0; {i > 0 ? 'border-top: 1px solid var(--bg4);' : ''}">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                  <span style="color: var(--accent); font-size: 13px; font-weight: 500;">
+                    {script.comment || `Script #${i + 1}`}
+                  </span>
+                  <span style="font-size: 11px; padding: 2px 6px; background: var(--bg4); border-radius: var(--radius-sm); color: var(--fg3);">
+                    {script.type || "unknown"}
+                  </span>
+                </div>
+                <div class="field">
+                  <label class="label">Pattern (in)</label>
+                  <input class="input" type="text" readonly value={script.in || ""} />
+                </div>
+                <div class="field">
+                  <label class="label">Replacement (out)</label>
+                  <input class="input" type="text" readonly value={script.out || ""} />
+                </div>
+              </div>
+            {/each}
           </div>
         </div>
       {/if}
@@ -202,12 +273,21 @@
     <!-- Assets Tab -->
     {#if subTab === "assets"}
       <div class="card">
-        <div class="card-header"><span class="card-title">Assets</span></div>
+        <div class="card-header">
+          <span class="card-title">Assets ({character.assetCount})</span>
+        </div>
         <div class="card-body">
-          {#if character.assetCount > 0}
-            <p style="color: var(--fg2);">{character.assetCount} assets embedded in character file.</p>
+          {#if character.assetList?.length > 0}
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              {#each character.assetList as asset}
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; background: var(--bg3); border-radius: var(--radius-sm);">
+                  <span style="font-size: 13px; color: var(--fg1); word-break: break-all;">{asset.name}</span>
+                  <span style="font-size: 12px; color: var(--fg3); white-space: nowrap; margin-left: 12px;">{formatBytes(asset.size)}</span>
+                </div>
+              {/each}
+            </div>
           {:else}
-            <p style="color: var(--fg3);">No assets in this character file.</p>
+            <p style="color: var(--fg3); text-align: center;">No assets in this character file.</p>
           {/if}
         </div>
       </div>
@@ -233,13 +313,139 @@
             extensions=".risum"
             onfile={handleModuleFile}
           />
-          {#if moduleInfo}
+          {#if moduleLoading}
+            <div class="spinner" style="margin-top: 8px;"></div>
+          {/if}
+          {#if moduleError}
+            <div style="margin-top: 8px; padding: 8px; background: var(--bg3); border-radius: var(--radius-sm); font-size: 12px; color: var(--red);">
+              {moduleError}
+            </div>
+          {/if}
+          {#if moduleInfo && !moduleParsed && !moduleError && !moduleLoading}
             <div style="margin-top: 8px; padding: 8px; background: var(--bg3); border-radius: var(--radius-sm); font-size: 12px; color: var(--fg2);">
               Module loaded: {moduleInfo}
             </div>
           {/if}
         </div>
       </div>
+
+      {#if moduleParsed}
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">{moduleParsed.name || "Unnamed Module"}</span>
+          </div>
+          <div class="card-body">
+            {#if moduleParsed.description}
+              <div class="field">
+                <label class="label">Description</label>
+                <p style="font-size: 13px; color: var(--fg2);">{moduleParsed.description}</p>
+              </div>
+            {/if}
+            {#if moduleParsed.id}
+              <div class="field">
+                <label class="label">ID</label>
+                <p style="font-size: 12px; color: var(--fg3); font-family: monospace;">{moduleParsed.id}</p>
+              </div>
+            {/if}
+            {#if moduleParsed.namespace}
+              <div class="field">
+                <label class="label">Namespace</label>
+                <p style="font-size: 12px; color: var(--fg3);">{moduleParsed.namespace}</p>
+              </div>
+            {/if}
+            <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px;">
+              {#if moduleParsed.lorebook?.length}
+                <span style="font-size: 12px; padding: 2px 8px; background: var(--bg4); border-radius: var(--radius-sm); color: var(--fg2);">
+                  {moduleParsed.lorebook.length} lorebook entries
+                </span>
+              {/if}
+              {#if moduleParsed.regex?.length}
+                <span style="font-size: 12px; padding: 2px 8px; background: var(--bg4); border-radius: var(--radius-sm); color: var(--fg2);">
+                  {moduleParsed.regex.length} regex scripts
+                </span>
+              {/if}
+              {#if moduleParsed.trigger?.length}
+                <span style="font-size: 12px; padding: 2px 8px; background: var(--bg4); border-radius: var(--radius-sm); color: var(--fg2);">
+                  {moduleParsed.trigger.length} trigger scripts
+                </span>
+              {/if}
+              {#if moduleParsed.cjs}
+                <span style="font-size: 12px; padding: 2px 8px; background: var(--bg4); border-radius: var(--radius-sm); color: var(--fg2);">
+                  Custom JS
+                </span>
+              {/if}
+              {#if moduleParsed.assets?.length}
+                <span style="font-size: 12px; padding: 2px 8px; background: var(--bg4); border-radius: var(--radius-sm); color: var(--fg2);">
+                  {moduleParsed.assets.length} assets
+                </span>
+              {/if}
+            </div>
+          </div>
+        </div>
+
+        <!-- Module Regex Scripts -->
+        {#if moduleParsed.regex?.length > 0}
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Module Regex ({moduleParsed.regex.length})</span>
+            </div>
+            <div class="card-body">
+              {#each moduleParsed.regex as script, i}
+                <div style="padding: 10px 0; {i > 0 ? 'border-top: 1px solid var(--bg4);' : ''}">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <span style="color: var(--accent); font-size: 13px; font-weight: 500;">
+                      {script.comment || `Script #${i + 1}`}
+                    </span>
+                    <span style="font-size: 11px; padding: 2px 6px; background: var(--bg4); border-radius: var(--radius-sm); color: var(--fg3);">
+                      {script.type || "unknown"}
+                    </span>
+                  </div>
+                  <div class="field">
+                    <label class="label">Pattern (in)</label>
+                    <input class="input" type="text" readonly value={script.in || ""} />
+                  </div>
+                  <div class="field">
+                    <label class="label">Replacement (out)</label>
+                    <input class="input" type="text" readonly value={script.out || ""} />
+                  </div>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        <!-- Module Lorebook -->
+        {#if moduleParsed.lorebook?.length > 0}
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Module Lorebook ({moduleParsed.lorebook.length})</span>
+            </div>
+            <div class="card-body">
+              {#each moduleParsed.lorebook as entry, i}
+                <div style="padding: 10px 0; {i > 0 ? 'border-top: 1px solid var(--bg4);' : ''}">
+                  <div style="margin-bottom: 4px;">
+                    <span style="color: var(--accent); font-size: 13px; font-weight: 500;">
+                      {entry.comment || entry.key || `Entry #${i + 1}`}
+                    </span>
+                  </div>
+                  {#if entry.key}
+                    <div class="field">
+                      <label class="label">Key</label>
+                      <input class="input" type="text" readonly value={entry.key} />
+                    </div>
+                  {/if}
+                  {#if entry.content}
+                    <div class="field">
+                      <label class="label">Content</label>
+                      <textarea class="textarea" rows="2" readonly value={entry.content}></textarea>
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      {/if}
     {/if}
   {/if}
 </div>

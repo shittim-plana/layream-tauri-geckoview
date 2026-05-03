@@ -132,14 +132,14 @@
     } catch (e) { vertexStatus = { connected: false, error: String(e) }; }
   }
 
-  function openExternal(url) {
+  async function openExternal(url) {
     dbg(`openExternal: ${url?.slice(0, 80)}...`);
-    const a = document.createElement("a");
-    a.href = url;
-    a.target = "_blank";
-    a.rel = "noopener";
-    a.click();
-    dbg("opened via anchor _blank");
+    try {
+        await invoke("open_url", { url });
+        dbg("opened via open_url command");
+    } catch (e) {
+        dbg(`open_url failed: ${e}`);
+    }
   }
 
   async function startVertexAuth() {
@@ -316,6 +316,29 @@
     if (gcaStatus?.connected && !gcaStatus?.expired) {
       loadGcaProfile();
     }
+
+    // Deep-link listener for Vertex OAuth callback
+    try {
+      const { onOpenUrl } = await import("@tauri-apps/plugin-deep-link");
+      await onOpenUrl((urls) => {
+        for (const url of urls) {
+          try {
+            const parsed = new URL(url);
+            if (parsed.host === "oauth" && parsed.pathname.startsWith("/callback")) {
+              const code = parsed.searchParams.get("code");
+              if (code) {
+                invoke("vertex_oauth_callback", { code }).then(() => {
+                  checkVertexStatus();
+                  dbg("Vertex OAuth callback success");
+                }).catch(e => dbg(`Vertex callback error: ${e}`));
+              }
+            }
+          } catch (parseErr) {
+            dbg(`Deep-link parse error: ${parseErr}`);
+          }
+        }
+      });
+    } catch (e) { dbg(`Deep-link listener setup: ${e}`); }
   });
 
   function statusText(status) {

@@ -233,26 +233,27 @@ async fn invoke_provider(
         .and_then(|v| v.as_u64())
         .map(|v| v as u32);
 
-    let request = GenerateRequest {
-        contents,
-        system_instruction: None,
-        safety_settings: build_safety_settings(),
-        generation_config: GenerationConfig {
-            max_output_tokens: max_tokens,
-            temperature,
-            thinking_config: None,
-            top_p,
-            top_k,
-            response_mime_type: None,
-            response_schema: None,
-        },
-        tools: None,
+    let gen_config = GenerationConfig {
+        max_output_tokens: max_tokens,
+        temperature,
+        thinking_config: None,
+        top_p,
+        top_k,
+        response_mime_type: None,
+        response_schema: None,
     };
 
     let client = reqwest::Client::new();
 
     match provider {
         "vertex" => {
+            let request = GenerateRequest {
+                contents,
+                system_instruction: None,
+                safety_settings: build_safety_settings(),
+                generation_config: gen_config,
+                tools: None,
+            };
             let project_id = settings_str(settings, "projectId")?;
             let region = settings_str(settings, "region")?;
             let creds = OAuthCredentials {
@@ -273,6 +274,13 @@ async fn invoke_provider(
             .map_err(|e| e.to_string())
         }
         "gca" => {
+            let request = GenerateRequest {
+                contents,
+                system_instruction: None,
+                safety_settings: build_safety_settings(),
+                generation_config: gen_config,
+                tools: None,
+            };
             let creds = OAuthCredentials {
                 client_id: GCA_OAUTH_CLIENT_ID.to_string(),
                 client_secret: None,

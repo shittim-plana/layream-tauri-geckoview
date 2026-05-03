@@ -1,11 +1,21 @@
 <script>
   import "./app.css";
   import { onMount } from "svelte";
-  import { invoke } from "./lib/tauri.js";
+  import { invoke, isTauri } from "./lib/tauri.js";
   import PresetView from "./views/PresetView.svelte";
   import CharacterView from "./views/CharacterView.svelte";
   import TestView from "./views/TestView.svelte";
   import SettingsView from "./views/SettingsView.svelte";
+
+  // Event name for broadcasting flush-on-close to all views.
+  // Views (ChatView, HypaView, etc.) listen for this and persist pending state.
+  const FLUSH_EVENT = "app-flush";
+  // Grace period to allow listeners to complete their flush before window.destroy().
+  // This is a soft bound: view listeners are fire-and-forget from App's perspective
+  // (view files are not modified in this change), so we wait a short window for
+  // their async work to settle. A future change can replace this with explicit
+  // ack events from each view to remove the magic timeout.
+  const FLUSH_GRACE_MS = 500;
 
   let activeTab = $state("preset");
   let oauthMessage = $state("");
@@ -20,6 +30,32 @@
       });
     } catch (e) {
       console.warn("Deep link plugin not available:", e);
+    }
+
+    // Desktop close-requested handler: broadcast flush, wait briefly, then destroy.
+    // Guarded by isTauri() — web has no window lifecycle to hook; Android either
+    // returns no-op or the listen() call throws (caught below, default close preserved).
+    if (!isTauri()) return;
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const { emit } = await import("@tauri-apps/api/event");
+      const win = getCurrentWindow();
+      await win.listen("tauri://close-requested", async () => {
+        try {
+          await emit(FLUSH_EVENT);
+          // Yield to let listeners start their flush, then give them a grace
+          // window to complete before tearing the window down.
+          await new Promise((r) => setTimeout(r, FLUSH_GRACE_MS));
+        } catch (e) {
+          console.error("Flush broadcast failed:", e);
+        } finally {
+          // Always destroy — failing to destroy would trap the user with a
+          // window that won't close. Data loss on flush failure is logged above.
+          await win.destroy();
+        }
+      });
+    } catch (e) {
+      console.warn("Close-requested listener not available:", e);
     }
   });
 

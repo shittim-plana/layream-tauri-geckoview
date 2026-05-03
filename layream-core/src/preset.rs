@@ -72,7 +72,7 @@ fn msgpack_to_preset(data: &[u8]) -> Result<BotPreset, LayreamError> {
     Ok(preset)
 }
 
-fn rmpv_to_json(val: rmpv::Value) -> serde_json::Value {
+pub fn rmpv_to_json(val: rmpv::Value) -> serde_json::Value {
     match val {
         rmpv::Value::Nil => serde_json::Value::Null,
         rmpv::Value::Boolean(b) => serde_json::Value::Bool(b),
@@ -158,6 +158,14 @@ fn gz_compress(data: &[u8]) -> Result<Vec<u8>, LayreamError> {
     encoder.write_all(data)?;
     let compressed = encoder.finish()?;
     Ok(compressed)
+}
+
+/// Parse a .risum module file (rpack-encoded -> gz-compressed -> msgpack) into JSON.
+pub fn parse_risum_data(data: &[u8]) -> Result<serde_json::Value, LayreamError> {
+    let unpacked = rpack::decode(data);
+    let decompressed = gz_decompress(&unpacked)?;
+    let rmpv_val: rmpv::Value = rmp_serde::from_slice(&decompressed)?;
+    Ok(rmpv_to_json(rmpv_val))
 }
 
 #[cfg(test)]

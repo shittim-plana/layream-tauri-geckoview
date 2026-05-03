@@ -85,11 +85,23 @@ pub fn load_character(name: String, data: Vec<u8>) -> Result<Value, String> {
         Some(charx::CardData::OldTavern(card)) => serde_json::to_value(card).ok(),
         None => None,
     };
+    let asset_list: Vec<Value> = ch.assets.iter().map(|(name, data)| {
+        serde_json::json!({
+            "name": name,
+            "size": data.len(),
+        })
+    }).collect();
     Ok(serde_json::json!({
         "card": card_json,
         "assetCount": ch.assets.len(),
+        "assetList": asset_list,
         "hasModule": ch.module_data.is_some(),
     }))
+}
+
+#[tauri::command]
+pub fn parse_risum(data: Vec<u8>) -> Result<Value, String> {
+    preset::parse_risum_data(&data).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -783,4 +795,35 @@ pub fn cmd_save_hypa(summaries: Value, app: tauri::AppHandle) -> Result<(), Stri
 pub fn cmd_load_hypa(app: tauri::AppHandle) -> Result<Value, String> {
     let data_dir = persistence::get_data_dir(&app)?;
     persistence::load_hypa(&data_dir)
+}
+
+#[tauri::command]
+pub async fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_shell::ShellExt;
+    #[allow(deprecated)]
+    app.shell().open(&url, None).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn cmd_save_current_preset(preset: Value, app: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::save_current_preset(&data_dir, &preset)
+}
+
+#[tauri::command]
+pub fn cmd_load_current_preset(app: tauri::AppHandle) -> Result<Value, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::load_current_preset(&data_dir)
+}
+
+#[tauri::command]
+pub fn cmd_save_session(session: Value, app: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::save_session(&data_dir, &session)
+}
+
+#[tauri::command]
+pub fn cmd_load_session(app: tauri::AppHandle) -> Result<Value, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::load_session(&data_dir)
 }

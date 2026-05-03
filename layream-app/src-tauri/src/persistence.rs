@@ -83,6 +83,42 @@ pub fn load_hypa(data_dir: &Path) -> Result<Value, String> {
     serde_json::from_str(&json).map_err(|e| e.to_string())
 }
 
+const PRESET_FILE: &str = "current_preset.json";
+
+pub fn save_current_preset(data_dir: &Path, preset: &Value) -> Result<(), String> {
+    fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(preset).map_err(|e| e.to_string())?;
+    fs::write(data_dir.join(PRESET_FILE), json.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn load_current_preset(data_dir: &Path) -> Result<Value, String> {
+    let path = data_dir.join(PRESET_FILE);
+    if !path.exists() {
+        return Ok(Value::Null);
+    }
+    let json = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&json).map_err(|e| e.to_string())
+}
+
+const SESSION_FILE: &str = "session.json";
+
+pub fn save_session(data_dir: &Path, session: &Value) -> Result<(), String> {
+    fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(session).map_err(|e| e.to_string())?;
+    fs::write(data_dir.join(SESSION_FILE), json.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn load_session(data_dir: &Path) -> Result<Value, String> {
+    let path = data_dir.join(SESSION_FILE);
+    if !path.exists() {
+        return Ok(serde_json::json!({ "messages": [] }));
+    }
+    let json = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&json).map_err(|e| e.to_string())
+}
+
 pub fn get_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()

@@ -52,6 +52,12 @@ pub fn run() {
             commands::gca_check_opt_out,
             commands::cmd_save_hypa,
             commands::cmd_load_hypa,
+            commands::open_url,
+            commands::cmd_save_current_preset,
+            commands::cmd_load_current_preset,
+            commands::cmd_save_session,
+            commands::cmd_load_session,
+            commands::parse_risum,
         ])
         .run(tauri::generate_context!());
 

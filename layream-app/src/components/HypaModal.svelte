@@ -15,6 +15,31 @@
 
   let { summary, onClose, onToggleImportant } = $props();
 
+  /** @type {HTMLButtonElement | undefined} */
+  let closeBtnRef = $state();
+  /** @type {HTMLDivElement | undefined} */
+  let cardRef = $state();
+
+  // --- Focus-on-open + body scroll lock ---
+  // Detect summary null→non-null transition, focus the close button,
+  // lock body scroll, and clean up on close.
+  const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+  $effect(() => {
+    if (!summary) return;
+
+    // Focus close button on next tick (after DOM mounts).
+    requestAnimationFrame(() => closeBtnRef?.focus());
+
+    // Lock body scroll while modal is open.
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  });
+
   function previewChatMemos(memos) {
     if (!Array.isArray(memos) || memos.length === 0) return "(none)";
     if (memos.length <= 5) return memos.join(", ");
@@ -46,7 +71,36 @@
   }
 
   function handleKeydown(e) {
-    if (e.key === "Escape") onClose?.();
+    // Ignore keypresses when modal is closed.
+    if (!summary) return;
+
+    if (e.key === "Escape") {
+      onClose?.();
+      return;
+    }
+
+    // Focus trap: cycle Tab / Shift+Tab within the modal card.
+    if (e.key === "Tab" && cardRef) {
+      const focusable = /** @type {HTMLElement[]} */ (
+        [...cardRef.querySelectorAll(FOCUSABLE_SELECTOR)]
+      );
+      if (focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    }
   }
 </script>
 
@@ -62,10 +116,10 @@
     aria-label="Summary details"
     tabindex="-1"
   >
-    <div class="hypa-modal-card">
+    <div class="hypa-modal-card" bind:this={cardRef}>
       <div class="hypa-modal-header">
         <span class="hypa-modal-title">Summary detail</span>
-        <button class="btn btn-sm btn-secondary" onclick={() => onClose?.()}>Close</button>
+        <button class="btn btn-sm btn-secondary" bind:this={closeBtnRef} onclick={() => onClose?.()}>Close</button>
       </div>
 
       <div class="hypa-modal-body">

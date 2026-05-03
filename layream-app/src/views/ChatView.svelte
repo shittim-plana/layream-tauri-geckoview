@@ -4,7 +4,8 @@
 
   // Parent registers our public interface (sendChatMessage, getMessages)
   // so AutopilotView can drive chat without ChatView being its parent.
-  let { onReady } = $props();
+  // hypaApi: optional, when present we auto-summarize and inject RAG context.
+  let { onReady, hypaApi } = $props();
 
   let messages = $state([]);
   let chatInput = $state("");
@@ -71,6 +72,34 @@
     }
   });
 
+  async function embedQueryForRag(settings, text) {
+    const h = settings.hypa || {};
+    const provider = h.embeddingProvider || "vertex";
+    const model = h.embeddingModel || "gemini-embedding-2";
+    try {
+      if (provider === "vertex") {
+        const v = settings.vertexConfig || {};
+        const result = await invoke("embed_vertex", {
+          texts: [text],
+          model,
+          project_id: settings.vertexProjectId || "",
+          region: settings.vertexRegion || v.region || "us-central1",
+        });
+        return Array.isArray(result?.[0]) ? result[0] : null;
+      } else if (provider === "voyage") {
+        const result = await invoke("embed_voyage", {
+          texts: [text],
+          model,
+          api_key: settings.voyageKey || "",
+        });
+        return Array.isArray(result?.[0]) ? result[0] : null;
+      }
+    } catch (e) {
+      console.warn("embed for RAG failed:", e);
+    }
+    return null;
+  }
+
   async function sendChatMessage(userMsg) {
     messages = [...messages, { role: "user", text: userMsg, time: new Date().toLocaleTimeString() }];
     streaming = true;
@@ -79,9 +108,31 @@
     try {
       const settings = await invoke("cmd_load_settings") || {};
       const provider = settings.chatProvider || "vertex";
-      const msgs = messages.filter(m => m.role !== "error").map(m => ({
+
+      // RAG: retrieve relevant summaries, inject as a memory header into the user message
+      let injectedUserMsg = userMsg;
+      if (hypaApi?.getRagContext) {
+        try {
+          const queryEmbedding = await embedQueryForRag(settings, userMsg);
+          if (queryEmbedding) {
+            const hits = await hypaApi.getRagContext(queryEmbedding, 5);
+            if (Array.isArray(hits) && hits.length > 0) {
+              const memoryText = hits
+                .map(h => h?.summary?.text || h?.text)
+                .filter(Boolean)
+                .join("\n\n");
+              if (memoryText) {
+                injectedUserMsg = `[Memory]\n${memoryText}\n\n[User]\n${userMsg}`;
+              }
+            }
+          }
+        } catch (e) { console.warn("RAG injection failed:", e); }
+      }
+
+      const msgs = messages.filter(m => m.role !== "error").map((m, idx, arr) => ({
         role: m.role === "char" ? "model" : m.role,
-        text: m.text,
+        // Replace the last user message text with the RAG-injected version
+        text: idx === arr.length - 1 && m.role === "user" ? injectedUserMsg : m.text,
       }));
 
       let result;
@@ -133,6 +184,14 @@
       const responseText = streamingText || result || "";
       if (responseText) {
         messages = [...messages, { role: "char", text: responseText, time: new Date().toLocaleTimeString() }];
+
+        // HyPA: trigger auto-summarization at unit boundaries
+        if (hypaApi?.triggerSummarizationIfNeeded) {
+          const h = settings.hypa || {};
+          hypaApi.triggerSummarizationIfNeeded(messages, h.summaryUnit ?? 10).catch(e => {
+            console.warn("auto-summarize failed:", e);
+          });
+        }
       }
       return responseText;
     } catch (e) {

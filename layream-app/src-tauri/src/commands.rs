@@ -140,8 +140,9 @@ fn messages_to_contents(messages: &[Value]) -> Vec<Content> {
     messages.iter().filter_map(|m| {
         let role = m.get("role")?.as_str()?;
         let text = m.get("text")?.as_str()?;
+        let api_role = match role { "char" => "model", _ => role };
         Some(Content {
-            role: role.to_string(),
+            role: api_role.to_string(),
             parts: vec![Part { text: Some(text.to_string()), thought: None, inline_data: None }],
         })
     }).collect()
@@ -794,18 +795,6 @@ pub async fn gca_check_opt_out(
     }
     gca::check_and_opt_out(&client, &valid_tokens.access_token)
         .await.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn cmd_save_hypa(summaries: Value, app: tauri::AppHandle) -> Result<(), String> {
-    let data_dir = persistence::get_data_dir(&app)?;
-    persistence::save_hypa(&data_dir, &summaries)
-}
-
-#[tauri::command]
-pub fn cmd_load_hypa(app: tauri::AppHandle) -> Result<Value, String> {
-    let data_dir = persistence::get_data_dir(&app)?;
-    persistence::load_hypa(&data_dir)
 }
 
 #[tauri::command]

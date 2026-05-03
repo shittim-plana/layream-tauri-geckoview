@@ -132,6 +132,8 @@
     streamingText = "";
 
     try {
+      await invoke("start_streaming", { text: "AI 응답 수신 중..." }).catch(() => {});
+
       const settings = await invoke("cmd_load_settings") || {};
       const provider = settings.chatProvider || "vertex";
 
@@ -224,6 +226,7 @@
       messages = [...messages, { chatId: newChatId(), role: "error", text: `Error: ${e}`, time: new Date().toLocaleTimeString() }];
       throw e;
     } finally {
+      await invoke("stop_streaming").catch(() => {});
       streaming = false;
       streamingText = "";
     }

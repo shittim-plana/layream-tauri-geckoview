@@ -66,6 +66,10 @@ pub struct GenerationConfig {
     pub top_p: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_k: Option<u32>,
+    #[serde(rename = "responseMimeType", skip_serializing_if = "Option::is_none")]
+    pub response_mime_type: Option<String>,
+    #[serde(rename = "responseSchema", skip_serializing_if = "Option::is_none")]
+    pub response_schema: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -421,4 +425,39 @@ mod tests {
         assert!(url.contains("locations/global"));
     }
 
+    #[test]
+    fn generation_config_omits_response_schema_when_none() {
+        let cfg = GenerationConfig {
+            max_output_tokens: 1024,
+            temperature: 0.7,
+            thinking_config: None,
+            top_p: None,
+            top_k: None,
+            response_mime_type: None,
+            response_schema: None,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(!json.contains("responseSchema"));
+        assert!(!json.contains("responseMimeType"));
+    }
+
+    #[test]
+    fn generation_config_includes_response_schema_when_some() {
+        let cfg = GenerationConfig {
+            max_output_tokens: 1024,
+            temperature: 0.7,
+            thinking_config: None,
+            top_p: None,
+            top_k: None,
+            response_mime_type: Some("application/json".into()),
+            response_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": { "answer": { "type": "string" } }
+            })),
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"responseMimeType\":\"application/json\""));
+        assert!(json.contains("\"responseSchema\""));
+        assert!(json.contains("\"answer\""));
+    }
 }

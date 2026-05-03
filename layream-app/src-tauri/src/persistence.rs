@@ -127,6 +127,24 @@ pub fn load_session(data_dir: &Path) -> Result<Value, String> {
     serde_json::from_str(&json).map_err(|e| e.to_string())
 }
 
+const CHARACTER_FILE: &str = "current_character.json";
+
+pub fn save_current_character(data_dir: &Path, character: &Value) -> Result<(), String> {
+    fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(character).map_err(|e| e.to_string())?;
+    fs::write(data_dir.join(CHARACTER_FILE), json.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn load_current_character(data_dir: &Path) -> Result<Value, String> {
+    let path = data_dir.join(CHARACTER_FILE);
+    if !path.exists() {
+        return Ok(Value::Null);
+    }
+    let json = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&json).map_err(|e| e.to_string())
+}
+
 pub fn get_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()

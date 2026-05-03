@@ -404,7 +404,7 @@ async fn embed_text_vertex(
 /// Caller is responsible for persisting the returned `Summary` (does not write
 /// hypa.json — see `hypa_save_all`). This separation lets the frontend assign
 /// `chatMemos` from its own message ids before saving.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn hypa_summarize(
     messages: Vec<Value>,
     settings: Value,
@@ -493,7 +493,7 @@ fn parse_summary_text(raw: &str) -> String {
 /// Cosine similarity search over stored summaries. Pin-boosted, invalidation-aware.
 ///
 /// Returns top-K entries as `{ index, score, summary }` sorted by score desc.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn hypa_search(
     query_embedding: Vec<f64>,
     top_k: usize,
@@ -549,7 +549,7 @@ pub async fn hypa_search(
 }
 
 /// Toggle pin on a chat message — adjusts `pinBoost` for every summary covering it.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn hypa_pin_message(
     chat_id: String,
     is_pinned: bool,
@@ -604,7 +604,7 @@ pub async fn hypa_pin_message(
 ///   - `hypa_pin_message` skips them via the `if s.invalidated { continue; }`
 ///     guard, so pinning a deleted message is a no-op (the audit trail
 ///     `chatMemos` still matches `chat_id`, but the invalidated flag wins).
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn hypa_invalidate_summary(
     chat_id: String,
     hypa_state: State<'_, HypaState>,
@@ -637,7 +637,7 @@ pub async fn hypa_invalidate_summary(
 /// soft-delete semantics. Cleanup targets only summaries whose `chatMemos`
 /// was never populated (e.g. a summarize call that was rolled back before
 /// chat ids were assigned).
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn hypa_cleanup(
     hypa_state: State<'_, HypaState>,
     app: tauri::AppHandle,
@@ -654,7 +654,7 @@ pub async fn hypa_cleanup(
 }
 
 /// Load all of hypa.json as raw JSON. Returns `{ "summaries": [] }` if file missing.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn hypa_load_all(
     hypa_state: State<'_, HypaState>,
     app: tauri::AppHandle,
@@ -667,7 +667,7 @@ pub async fn hypa_load_all(
 }
 
 /// Save the entire hypa.json. Pretty-printed (atomic write — see persistence::save_hypa).
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn hypa_save_all(
     summaries: Value,
     hypa_state: State<'_, HypaState>,

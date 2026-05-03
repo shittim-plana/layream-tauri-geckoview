@@ -32,7 +32,7 @@
   function displayParam(v) { return v === PARAM_SENTINEL ? "" : v; }
   function parseParam(v) { return v === "" || v === undefined ? PARAM_SENTINEL : Number(v); }
 
-  async function handleFile(name, data) {
+  async function handleFile(name, data, tempName) {
     const ext = "." + name.split(".").pop()?.toLowerCase();
     if (!PRESET_EXTS.includes(ext)) {
       error = `지원하지 않는 형식: ${ext} (${PRESET_EXTS.join(", ")} 만 가능)`;
@@ -41,12 +41,15 @@
     loading = true;
     error = "";
     try {
-      const result = await invoke("load_preset", { name, data });
+      const result = tempName
+        ? await invoke("load_preset_from_path", { name, temp_name: tempName })
+        : await invoke("load_preset", { name, data });
       if (result) {
         preset = result;
         presetName = name;
         editingIndex = -1;
         error = "";
+        invoke("cmd_save_current_preset", { preset: result }).catch(e => console.warn("Auto-save:", e));
       } else {
         error = "load_preset returned null/undefined";
       }
@@ -63,14 +66,14 @@
       if (result) {
         const fileName = `${preset.name || "preset"}.${result.ext}`;
         const data = new Uint8Array(result.data);
-        // Try Tauri fs plugin (works on Android where Blob URLs are blocked)
         try {
-          const { writeFile, BaseDirectory } = await import("@tauri-apps/plugin-fs");
-          await writeFile(fileName, data, { baseDir: BaseDirectory.Download });
-          status = `Saved to Downloads/${fileName}`;
-          setTimeout(() => { if (status === `Saved to Downloads/${fileName}`) status = ""; }, 3000);
-        } catch (fsErr) {
-          // Fallback: Blob URL download (works on desktop)
+          const savedPath = await invoke("save_file_to_downloads", {
+            filename: fileName,
+            data: Array.from(data),
+          });
+          status = `Saved to ${savedPath}`;
+          setTimeout(() => { if (status?.startsWith("Saved to")) status = ""; }, 4000);
+        } catch (saveErr) {
           const blob = new Blob([data]);
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");

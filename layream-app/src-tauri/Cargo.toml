@@ -17,6 +17,7 @@ log = "0.4"
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 tauri-plugin-dialog = "2"
+base64 = "0.22"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -18,7 +18,19 @@ use serde_json::Value;
 use std::sync::Mutex;
 use tauri::{Emitter, State};
 
+use std::collections::HashMap;
+
 use crate::persistence;
+
+pub struct CharacterAssetsState {
+    pub assets: Mutex<HashMap<String, Vec<u8>>>,
+}
+
+impl Default for CharacterAssetsState {
+    fn default() -> Self {
+        Self { assets: Mutex::new(HashMap::new()) }
+    }
+}
 
 pub struct AuthState {
     pub vertex_pkce: Mutex<Option<PkceChallenge>>,
@@ -55,7 +67,7 @@ impl AuthState {
     }
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn load_preset(name: String, data: Vec<u8>) -> Result<Value, String> {
     tokio::task::spawn_blocking(move || {
         let p = preset::read_preset(&name, &data).map_err(|e| e.to_string())?;
@@ -65,7 +77,7 @@ pub async fn load_preset(name: String, data: Vec<u8>) -> Result<Value, String> {
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn export_preset(preset: Value, format: String) -> Result<Value, String> {
     let p: BotPreset = serde_json::from_value(preset).map_err(|e| e.to_string())?;
     let fmt = match format.as_str() {
@@ -79,9 +91,13 @@ pub fn export_preset(preset: Value, format: String) -> Result<Value, String> {
     }))
 }
 
-#[tauri::command]
-pub async fn load_character(name: String, data: Vec<u8>) -> Result<Value, String> {
-    tokio::task::spawn_blocking(move || {
+#[tauri::command(rename_all = "snake_case")]
+pub async fn load_character(
+    name: String,
+    data: Vec<u8>,
+    asset_state: State<'_, CharacterAssetsState>,
+) -> Result<Value, String> {
+    let result = tokio::task::spawn_blocking(move || {
         let ch = charx::read_character(&name, &data).map_err(|e| e.to_string())?;
         let card_json = match &ch.card {
             Some(charx::CardData::V2(card)) => serde_json::to_value(card).ok(),
@@ -94,18 +110,22 @@ pub async fn load_character(name: String, data: Vec<u8>) -> Result<Value, String
                 "size": data.len(),
             })
         }).collect();
-        Ok(serde_json::json!({
+        let json = serde_json::json!({
             "card": card_json,
             "assetCount": ch.assets.len(),
             "assetList": asset_list,
             "hasModule": ch.module_data.is_some(),
-        }))
+        });
+        Ok((json, ch.assets))
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+
+    *asset_state.assets.lock().unwrap() = result.1;
+    Ok(result.0)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn parse_risum(data: Vec<u8>) -> Result<Value, String> {
     tokio::task::spawn_blocking(move || {
         preset::parse_risum_data(&data).map_err(|e| e.to_string())
@@ -114,7 +134,54 @@ pub async fn parse_risum(data: Vec<u8>) -> Result<Value, String> {
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
+pub async fn load_preset_from_path(name: String, temp_name: String, app: tauri::AppHandle) -> Result<Value, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    let path = data_dir.join(&temp_name);
+    let data = std::fs::read(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
+    let _ = std::fs::remove_file(&path);
+    tokio::task::spawn_blocking(move || {
+        let p = preset::read_preset(&name, &data).map_err(|e| e.to_string())?;
+        serde_json::to_value(&p).map_err(|e| e.to_string())
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn load_character_from_path(
+    name: String, temp_name: String,
+    asset_state: State<'_, CharacterAssetsState>, app: tauri::AppHandle,
+) -> Result<Value, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    let path = data_dir.join(&temp_name);
+    let data = std::fs::read(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
+    let _ = std::fs::remove_file(&path);
+    let result = tokio::task::spawn_blocking(move || {
+        let ch = charx::read_character(&name, &data).map_err(|e| e.to_string())?;
+        let card_json = match &ch.card {
+            Some(charx::CardData::V2(card)) => serde_json::to_value(card).ok(),
+            Some(charx::CardData::OldTavern(card)) => serde_json::to_value(card).ok(),
+            None => None,
+        };
+        let asset_list: Vec<Value> = ch.assets.iter().map(|(n, d)| serde_json::json!({"name": n, "size": d.len()})).collect();
+        let json = serde_json::json!({"card": card_json, "assetCount": ch.assets.len(), "assetList": asset_list, "hasModule": ch.module_data.is_some()});
+        Ok((json, ch.assets))
+    }).await.map_err(|e| e.to_string())??;
+    *asset_state.assets.lock().unwrap() = result.1;
+    Ok(result.0)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn parse_risum_from_path(temp_name: String, app: tauri::AppHandle) -> Result<Value, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    let path = data_dir.join(&temp_name);
+    let data = std::fs::read(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
+    let _ = std::fs::remove_file(&path);
+    tokio::task::spawn_blocking(move || {
+        preset::parse_risum_data(&data).map_err(|e| e.to_string())
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub fn evaluate_cbs(input: String, char_name: String, user_name: String) -> String {
     let mut ctx = CbsContext {
         char_name,
@@ -183,7 +250,7 @@ fn log_api_call(log_state: &State<'_, RequestLogState>, provider: &str, model: &
     }
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn chat_vertex(
     messages: Vec<Value>,
     model: String,
@@ -262,7 +329,7 @@ pub async fn chat_vertex(
     result.map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn chat_gca(
     messages: Vec<Value>,
     model: String,
@@ -349,7 +416,7 @@ pub async fn chat_gca(
     result.map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn chat_mistral(
     messages: Vec<Value>,
     model: String,
@@ -398,7 +465,7 @@ pub async fn chat_mistral(
     result.map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn vertex_oauth_start(state: State<'_, AuthState>) -> Result<String, String> {
     let pkce = vertex_auth::generate_pkce();
     let creds = OAuthCredentials {
@@ -411,7 +478,7 @@ pub fn vertex_oauth_start(state: State<'_, AuthState>) -> Result<String, String>
     Ok(url)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn gca_oauth_start(
     state: State<'_, AuthState>,
     app: tauri::AppHandle,
@@ -423,7 +490,7 @@ pub async fn gca_oauth_start(
     let redirect_uri = format!("http://localhost:{}/oauth2callback", port);
 
     let auth_url = format!(
-        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=select_account%20consent",
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=select_account+consent",
         vertex_auth::urlencoded(GCA_OAUTH_CLIENT_ID),
         vertex_auth::urlencoded(&redirect_uri),
         vertex_auth::urlencoded(GCA_OAUTH_SCOPE),
@@ -491,7 +558,7 @@ fn extract_code_from_request(request: &str) -> Option<String> {
     None
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn vertex_oauth_callback(
     code: String,
     state: State<'_, AuthState>,
@@ -513,7 +580,7 @@ pub async fn vertex_oauth_callback(
     Ok("Vertex AI connected".into())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn gca_oauth_callback(
     code: String,
     state: State<'_, AuthState>,
@@ -533,7 +600,7 @@ pub async fn gca_oauth_callback(
     Ok("GCA connected".into())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn vertex_oauth_status(state: State<'_, AuthState>) -> Value {
     let tokens = state.vertex_tokens.lock().unwrap();
     match tokens.as_ref() {
@@ -551,7 +618,7 @@ pub fn vertex_oauth_status(state: State<'_, AuthState>) -> Value {
     }
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn gca_oauth_status(state: State<'_, AuthState>) -> Value {
     let tokens = state.gca_tokens.lock().unwrap();
     match tokens.as_ref() {
@@ -569,7 +636,7 @@ pub fn gca_oauth_status(state: State<'_, AuthState>) -> Value {
     }
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn vertex_list_projects(
     state: State<'_, AuthState>,
     app: tauri::AppHandle,
@@ -596,7 +663,7 @@ pub async fn vertex_list_projects(
     serde_json::to_value(&projects).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn vertex_oauth_disconnect(state: State<'_, AuthState>, app: tauri::AppHandle) -> String {
     *state.vertex_tokens.lock().unwrap() = None;
     *state.vertex_pkce.lock().unwrap() = None;
@@ -604,14 +671,14 @@ pub fn vertex_oauth_disconnect(state: State<'_, AuthState>, app: tauri::AppHandl
     "Disconnected".into()
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn gca_oauth_disconnect(state: State<'_, AuthState>, app: tauri::AppHandle) -> String {
     *state.gca_tokens.lock().unwrap() = None;
     state.persist_tokens(&app);
     "Disconnected".into()
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn mistral_list_models(api_key: String) -> Result<Value, String> {
     let client = reqwest::Client::new();
     let models = layream_core::mistral::list_models(&client, &api_key)
@@ -620,7 +687,7 @@ pub async fn mistral_list_models(api_key: String) -> Result<Value, String> {
     serde_json::to_value(&models).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn vertex_list_models(
     region: String,
     state: State<'_, AuthState>,
@@ -658,17 +725,17 @@ impl Default for RequestLogState {
     }
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn get_request_logs(state: State<'_, RequestLogState>) -> Vec<Value> {
     state.logs.lock().unwrap().clone()
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn clear_request_logs(state: State<'_, RequestLogState>) {
     state.logs.lock().unwrap().clear();
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn highlight_cbs(input: String) -> Value {
     let tokens = highlighter::highlight(&input);
     let diagnostics = highlighter::check_blocks(&input);
@@ -692,19 +759,19 @@ pub fn highlight_cbs(input: String) -> Value {
     })
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn cmd_save_settings(settings: Value, app: tauri::AppHandle) -> Result<(), String> {
     let data_dir = persistence::get_data_dir(&app)?;
     persistence::save_settings(&data_dir, &settings)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn cmd_load_settings(app: tauri::AppHandle) -> Result<Value, String> {
     let data_dir = persistence::get_data_dir(&app)?;
     persistence::load_settings(&data_dir)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn embed_vertex(
     texts: Vec<String>,
     model: String,
@@ -736,7 +803,7 @@ pub async fn embed_vertex(
     ).await.map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn embed_voyage(
     texts: Vec<String>,
     model: String,
@@ -747,7 +814,7 @@ pub async fn embed_voyage(
         .await.map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn gca_load_code_assist(
     state: State<'_, AuthState>,
     app: tauri::AppHandle,
@@ -772,7 +839,7 @@ pub async fn gca_load_code_assist(
         .await.map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn gca_check_opt_out(
     state: State<'_, AuthState>,
     app: tauri::AppHandle,
@@ -797,32 +864,32 @@ pub async fn gca_check_opt_out(
         .await.map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
     use tauri_plugin_shell::ShellExt;
     #[allow(deprecated)]
     app.shell().open(&url, None).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn cmd_save_current_preset(preset: Value, app: tauri::AppHandle) -> Result<(), String> {
     let data_dir = persistence::get_data_dir(&app)?;
     persistence::save_current_preset(&data_dir, &preset)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn cmd_load_current_preset(app: tauri::AppHandle) -> Result<Value, String> {
     let data_dir = persistence::get_data_dir(&app)?;
     persistence::load_current_preset(&data_dir)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn cmd_save_session(session: Value, app: tauri::AppHandle) -> Result<(), String> {
     let data_dir = persistence::get_data_dir(&app)?;
     persistence::save_session(&data_dir, &session)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn cmd_load_session(app: tauri::AppHandle) -> Result<Value, String> {
     let data_dir = persistence::get_data_dir(&app)?;
     persistence::load_session(&data_dir)
@@ -835,7 +902,7 @@ const USER_MSG_SYSTEM_PROMPT: &str =
 const USER_MSG_MAX_TOKENS: u32 = 256;
 const USER_MSG_TEMPERATURE: f64 = 1.0;
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn generate_user_message(
     context: Vec<Value>,
     provider: String,
@@ -1013,4 +1080,68 @@ pub async fn generate_user_message(
         }
         other => Err(format!("Unsupported provider: {}", other)),
     }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn save_file_to_downloads(
+    filename: String,
+    data: Vec<u8>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    use std::path::PathBuf;
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    #[cfg(target_os = "android")]
+    {
+        candidates.push(PathBuf::from("/sdcard/Download"));
+        candidates.push(PathBuf::from("/storage/emulated/0/Download"));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        if let Ok(dir) = app.path().download_dir() {
+            candidates.push(dir);
+        }
+    }
+
+    if let Ok(dir) = app.path().app_data_dir() {
+        candidates.push(dir.join("exports"));
+    }
+
+    let mut last_err = String::from("no candidate directory");
+    for dir in candidates {
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            last_err = format!("mkdir {}: {}", dir.display(), e);
+            continue;
+        }
+        let path = dir.join(&filename);
+        match std::fs::write(&path, &data) {
+            Ok(()) => return Ok(path.to_string_lossy().into_owned()),
+            Err(e) => last_err = format!("write {}: {}", path.display(), e),
+        }
+    }
+    Err(last_err)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn get_asset_data(
+    asset_name: String,
+    state: State<'_, CharacterAssetsState>,
+) -> Result<String, String> {
+    use base64::Engine;
+    let guard = state.assets.lock().unwrap();
+    let data = guard.get(&asset_name).ok_or("Asset not found")?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(data))
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn cmd_save_current_character(character: Value, app: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::save_current_character(&data_dir, &character)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn cmd_load_current_character(app: tauri::AppHandle) -> Result<Value, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::load_current_character(&data_dir)
 }

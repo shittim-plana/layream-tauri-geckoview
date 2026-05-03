@@ -1,4 +1,5 @@
 <script>
+  import { onMount } from "svelte";
   import { invoke } from "../lib/tauri.js";
   import FileImport from "../components/FileImport.svelte";
 
@@ -12,13 +13,47 @@
   let moduleError = $state("");
   let moduleLoading = $state(false);
 
-  async function handleModuleFile(name, data) {
+  let previewAsset = $state(null);
+  let previewData = $state("");
+  let previewLoading = $state(false);
+
+  const IMG_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
+  function isImage(name) {
+    return IMG_EXTS.some(ext => name.toLowerCase().endsWith(ext));
+  }
+  function mimeType(name) {
+    const ext = name.split(".").pop()?.toLowerCase();
+    if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+    if (ext === "gif") return "image/gif";
+    if (ext === "webp") return "image/webp";
+    return "image/png";
+  }
+
+  async function loadAssetPreview(assetName) {
+    if (previewAsset === assetName) { previewAsset = null; previewData = ""; return; }
+    previewAsset = assetName;
+    previewLoading = true;
+    previewData = "";
+    try {
+      const b64 = await invoke("get_asset_data", { asset_name: assetName });
+      previewData = `data:${mimeType(assetName)};base64,${b64}`;
+    } catch (e) {
+      previewData = "";
+      previewAsset = null;
+      error = `Asset load failed: ${e}`;
+    }
+    previewLoading = false;
+  }
+
+  async function handleModuleFile(name, data, tempName) {
     moduleInfo = `${name} (${(data.length / 1024).toFixed(1)} KB)`;
     moduleError = "";
     moduleParsed = null;
     moduleLoading = true;
     try {
-      const result = await invoke("parse_risum", { data });
+      const result = tempName
+        ? await invoke("parse_risum_from_path", { temp_name: tempName })
+        : await invoke("parse_risum", { data });
       moduleParsed = result;
     } catch (e) {
       moduleError = `parse_risum error: ${String(e)}`;
@@ -26,7 +61,7 @@
     moduleLoading = false;
   }
 
-  async function handleFile(name, data) {
+  async function handleFile(name, data, tempName) {
     const CHAR_EXTS = [".charx", ".png", ".jpeg", ".jpg", ".json"];
     const ext = "." + name.split(".").pop()?.toLowerCase();
     if (!CHAR_EXTS.includes(ext)) {
@@ -36,11 +71,14 @@
     loading = true;
     error = "";
     try {
-      const result = await invoke("load_character", { name, data });
+      const result = tempName
+        ? await invoke("load_character_from_path", { name, temp_name: tempName })
+        : await invoke("load_character", { name, data });
       if (result) {
         character = result;
         characterName = name;
         error = "";
+        invoke("cmd_save_current_character", { character: { card: result.card, characterName: name, assetCount: result.assetCount, hasModule: result.hasModule } }).catch(e => console.warn("Auto-save:", e));
       } else {
         error = "load_character returned null/undefined";
       }
@@ -64,17 +102,46 @@
     return character?.card?.data || character?.card || null;
   }
 
+  let status = $state("");
+
+  async function saveCharacter() {
+    if (!character) return;
+    try {
+      await invoke("cmd_save_current_character", { character: { card: character.card, characterName, assetCount: character.assetCount, hasModule: character.hasModule } });
+      status = "Saved!";
+      setTimeout(() => { if (status === "Saved!") status = ""; }, 2000);
+    } catch (e) {
+      error = `Save failed: ${e}`;
+    }
+  }
+
   function formatBytes(bytes) {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
+
+  onMount(async () => {
+    try {
+      const saved = await invoke("cmd_load_current_character");
+      if (saved && typeof saved === "object" && saved.card) {
+        character = saved;
+        characterName = saved.characterName || "Saved Character";
+      }
+    } catch (e) { console.warn("Load character failed:", e); }
+  });
 </script>
 
 <div>
   {#if error}
     <div class="card" style="border-color: var(--red); color: var(--red);">
       <div class="card-body">{error}</div>
+    </div>
+  {/if}
+
+  {#if status}
+    <div class="card" style="border-color: var(--accent); color: var(--accent);">
+      <div class="card-body">{status}</div>
     </div>
   {/if}
 
@@ -97,7 +164,10 @@
     <div class="card">
       <div class="card-header">
         <span class="card-title">{data?.name || characterName}</span>
-        <button class="btn btn-sm btn-danger" onclick={closeCharacter}>Close</button>
+        <div style="display: flex; gap: 6px;">
+          <button class="btn btn-sm btn-primary" onclick={saveCharacter}>Save</button>
+          <button class="btn btn-sm btn-danger" onclick={closeCharacter}>Close</button>
+        </div>
       </div>
       {#if data?.creator}
         <div class="card-body" style="padding: 8px 14px;">
@@ -280,9 +350,21 @@
           {#if character.assetList?.length > 0}
             <div style="display: flex; flex-direction: column; gap: 4px;">
               {#each character.assetList as asset}
-                <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; background: var(--bg3); border-radius: var(--radius-sm);">
-                  <span style="font-size: 13px; color: var(--fg1); word-break: break-all;">{asset.name}</span>
-                  <span style="font-size: 12px; color: var(--fg3); white-space: nowrap; margin-left: 12px;">{formatBytes(asset.size)}</span>
+                <div
+                  style="padding: 6px 8px; background: var(--bg3); border-radius: var(--radius-sm); {isImage(asset.name) ? 'cursor: pointer;' : ''}"
+                  onclick={() => isImage(asset.name) && loadAssetPreview(asset.name)}
+                >
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 13px; color: {isImage(asset.name) ? 'var(--accent)' : 'var(--fg1)'}; word-break: break-all;">{asset.name}</span>
+                    <span style="font-size: 12px; color: var(--fg3); white-space: nowrap; margin-left: 12px;">{formatBytes(asset.size)}</span>
+                  </div>
+                  {#if previewAsset === asset.name}
+                    {#if previewLoading}
+                      <div style="padding: 12px; text-align: center;"><div class="spinner"></div></div>
+                    {:else if previewData}
+                      <img src={previewData} alt={asset.name} style="max-width: 100%; margin-top: 8px; border-radius: var(--radius-sm);" />
+                    {/if}
+                  {/if}
                 </div>
               {/each}
             </div>

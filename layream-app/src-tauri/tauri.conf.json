@@ -40,6 +40,9 @@
       "mobile": [
         { "host": "oauth", "pathPrefix": ["/callback"] }
       ]
+    },
+    "shell": {
+      "open": true
     }
   }
 }

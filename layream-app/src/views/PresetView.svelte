@@ -25,6 +25,11 @@
 
   const PRESET_EXTS = [".risup", ".risupreset", ".json", ".preset"];
 
+  // RisuAI uses -1000 as sentinel for "disabled/default" parameters
+  const PARAM_SENTINEL = -1000;
+  function displayParam(v) { return v === PARAM_SENTINEL ? "" : v; }
+  function parseParam(v) { return v === "" || v === undefined ? PARAM_SENTINEL : Number(v); }
+
   async function handleFile(name, data) {
     const ext = "." + name.split(".").pop()?.toLowerCase();
     if (!PRESET_EXTS.includes(ext)) {
@@ -54,13 +59,23 @@
     try {
       const result = await invoke("export_preset", { preset, format });
       if (result) {
-        const blob = new Blob([new Uint8Array(result.data)]);
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `${preset.name || "preset"}.${result.ext}`;
-        a.click();
-        URL.revokeObjectURL(url);
+        const fileName = `${preset.name || "preset"}.${result.ext}`;
+        const data = new Uint8Array(result.data);
+        // Try Tauri fs plugin (works on Android where Blob URLs are blocked)
+        try {
+          const { writeFile, BaseDirectory } = await import("@tauri-apps/plugin-fs");
+          await writeFile(fileName, data, { baseDir: BaseDirectory.Download });
+          error = `Saved to Downloads/${fileName}`;
+        } catch (fsErr) {
+          // Fallback: Blob URL download (works on desktop)
+          const blob = new Blob([data]);
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = fileName;
+          a.click();
+          URL.revokeObjectURL(url);
+        }
       }
     } catch (e) {
       error = String(e);
@@ -290,23 +305,28 @@
             </div>
             <div class="field">
               <label class="label">Top P</label>
-              <input class="input" type="number" step="0.01" bind:value={preset.top_p} />
+              <input class="input" type="number" step="0.01" value={displayParam(preset.top_p)}
+                oninput={(e) => preset.top_p = parseParam(e.target.value)} />
             </div>
             <div class="field">
               <label class="label">Top K</label>
-              <input class="input" type="number" bind:value={preset.top_k} />
+              <input class="input" type="number" value={displayParam(preset.top_k)}
+                oninput={(e) => preset.top_k = parseParam(e.target.value)} />
             </div>
             <div class="field">
               <label class="label">Min P</label>
-              <input class="input" type="number" step="0.01" bind:value={preset.min_p} />
+              <input class="input" type="number" step="0.01" value={displayParam(preset.min_p)}
+                oninput={(e) => preset.min_p = parseParam(e.target.value)} />
             </div>
             <div class="field">
               <label class="label">Freq Penalty</label>
-              <input class="input" type="number" step="0.1" bind:value={preset.frequencyPenalty} />
+              <input class="input" type="number" step="0.1" value={displayParam(preset.frequencyPenalty)}
+                oninput={(e) => preset.frequencyPenalty = parseParam(e.target.value)} />
             </div>
             <div class="field">
               <label class="label">Presence Penalty</label>
-              <input class="input" type="number" step="0.1" bind:value={preset.PresensePenalty} />
+              <input class="input" type="number" step="0.1" value={displayParam(preset.PresensePenalty)}
+                oninput={(e) => preset.PresensePenalty = parseParam(e.target.value)} />
             </div>
           </div>
         </div>

@@ -84,6 +84,10 @@
   const VERTEX_DEFAULT_MODELS = [
     "gemini-2.5-pro",
     "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash",
   ];
 
   const VERTEX_EMBEDDING_MODELS = [
@@ -132,12 +136,10 @@
     dbg(`openExternal: ${url?.slice(0, 80)}...`);
     try {
       const { open } = await import("@tauri-apps/plugin-shell");
-      dbg("shell imported, calling open()...");
       await open(url);
-      dbg("open() completed");
+      dbg("opened in external browser");
     } catch (e) {
-      dbg(`shell.open failed: ${e}, trying location.href...`);
-      window.location.href = url;
+      dbg(`shell.open failed: ${e} — 외부 브라우저를 열 수 없습니다`);
     }
   }
 

@@ -361,7 +361,7 @@
       </div>
 
       {#if messages.length > 0}
-        <div style="text-align: center; padding: 4px;">
+        <div style="flex-shrink: 0; text-align: center; padding: 4px;">
           <button class="btn btn-sm btn-secondary" onclick={clearChat}>Clear Chat</button>
         </div>
       {/if}

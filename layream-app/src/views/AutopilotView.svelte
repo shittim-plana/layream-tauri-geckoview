@@ -31,10 +31,18 @@
   // A-1: user persona prepended to USER_MSG_SYSTEM_PROMPT in ai strategy.
   let autopilotPersona = $state("");
 
-  // A-2: char↔char mode. In "char-to-char" the loop alternates user-persona-driven
-  // generation with char-persona-driven generation. The user persona and char
-  // persona play distinct roles; both are sent to generate_user_message as the
-  // "persona" arg on their respective turns.
+  // A-2: char↔char mode. SEMANTICS — this is "personas alternate, both AI",
+  // NOT a true AI↔AI dialogue. Every generated message is still routed through
+  // chatApi.sendChatMessage(...), which appends the input as role:"user" and
+  // then triggers a char response from the chat provider. So a "char-to-char"
+  // turn looks like: (a) generate_user_message runs with the *char* persona,
+  // producing text from the char's POV; (b) that text is sent as a user-role
+  // message; (c) the chat provider replies in-character. This is a deliberate
+  // pragmatic choice: ChatView owns message-array state and exposes only
+  // sendChatMessage as the conduit (no char-side append), so true alternation
+  // would require modifying ChatView. Until that API exists, "char-to-char"
+  // means "alternate which persona drives generate_user_message each turn"
+  // — both halves of the dialogue still pass through the user-input pipeline.
   let autopilotMode = $state("user-driven"); // "user-driven" | "char-to-char"
   let autopilotCharPersona = $state("");
 
@@ -59,7 +67,10 @@
     if (!trimmed) return { schema: null, error: "" };
     try {
       const parsed = JSON.parse(trimmed);
-      if (typeof parsed !== "object" || parsed === null) {
+      // JSON Schema must be a plain object — reject null, arrays, primitives.
+      // Array is a typeof "object" in JS so it needs its own check (§4-C:
+      // accepting an array would fabricate an object-shaped contract).
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
         return { schema: null, error: "Schema must be a JSON object" };
       }
       return { schema: parsed, error: "" };
@@ -166,7 +177,11 @@
 
   // --- Main loop ---
   async function runAutopilotLoop() {
-    for (let turn = 1; turn <= autopilotTurns; turn++) {
+    // Clamp turns to [TURN_MIN, TURN_MAX] integer range at loop start (§9-A:
+    // make the bound explicit; §1-E: NaN/negative/>MAX are not valid inputs).
+    // `| 0` coerces NaN/floats to int; Math.max/min then clamps the range.
+    const turns = Math.max(TURN_MIN, Math.min(TURN_MAX, autopilotTurns | 0));
+    for (let turn = 1; turn <= turns; turn++) {
       // Check FSM at top of every turn (§2-A: pause boundary).
       if (!(await waitWhilePaused())) break;
 

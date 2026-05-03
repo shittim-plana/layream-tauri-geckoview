@@ -132,15 +132,14 @@
     } catch (e) { vertexStatus = { connected: false, error: String(e) }; }
   }
 
-  async function openExternal(url) {
+  function openExternal(url) {
     dbg(`openExternal: ${url?.slice(0, 80)}...`);
-    try {
-      const { open } = await import("@tauri-apps/plugin-shell");
-      await open(url);
-      dbg("opened in external browser");
-    } catch (e) {
-      dbg(`shell.open failed: ${e} — 외부 브라우저를 열 수 없습니다`);
-    }
+    const a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.click();
+    dbg("opened via anchor _blank");
   }
 
   async function startVertexAuth() {

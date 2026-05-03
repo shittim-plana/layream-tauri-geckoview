@@ -50,6 +50,8 @@ pub struct ChatMessage {
 pub struct ResponseFormat {
     #[serde(rename = "type")]
     pub format_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -322,8 +324,25 @@ mod tests {
     fn response_format_json() {
         let rf = ResponseFormat {
             format_type: "json_object".into(),
+            schema: None,
         };
         let json = serde_json::to_string(&rf).unwrap();
         assert!(json.contains("\"type\":\"json_object\""));
+        assert!(!json.contains("schema"));
+    }
+
+    #[test]
+    fn response_format_json_with_schema() {
+        let rf = ResponseFormat {
+            format_type: "json_object".into(),
+            schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": { "name": { "type": "string" } }
+            })),
+        };
+        let json = serde_json::to_string(&rf).unwrap();
+        assert!(json.contains("\"type\":\"json_object\""));
+        assert!(json.contains("\"schema\""));
+        assert!(json.contains("\"properties\""));
     }
 }

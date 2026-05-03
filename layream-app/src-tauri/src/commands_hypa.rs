@@ -18,9 +18,35 @@ use layream_core::voyage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::State;
+use tokio::sync::Mutex;
 
 use crate::commands::AuthState;
 use crate::persistence;
+
+// === Concurrency state ===
+//
+// All hypa_* commands that read or write hypa.json acquire this lock at the
+// start of their critical section. This serializes load-mutate-save sequences
+// across concurrent invocations (e.g. pin + invalidate fired together) so the
+// second writer cannot overwrite the first writer's update.
+//
+// Read-only commands (`hypa_load_all`, `hypa_search`) also acquire the lock to
+// guarantee read-after-write consistency — a frontend that just awaited
+// `hypa_pin_message` must observe the pin in a subsequent read.
+//
+// `tokio::sync::Mutex` (not std::sync::Mutex) is required because the guard
+// is held across `.await` points in async commands.
+pub struct HypaState {
+    pub lock: Mutex<()>,
+}
+
+impl Default for HypaState {
+    fn default() -> Self {
+        Self {
+            lock: Mutex::new(()),
+        }
+    }
+}
 
 // === Constants (§9-B: no magic numbers) ===
 
@@ -215,6 +241,8 @@ async fn invoke_provider(
             thinking_config: None,
             top_p,
             top_k,
+            response_mime_type: None,
+            response_schema: None,
         },
         tools: None,
     };
@@ -322,8 +350,15 @@ pub async fn hypa_summarize(
     messages: Vec<Value>,
     settings: Value,
     state: State<'_, AuthState>,
+    hypa_state: State<'_, HypaState>,
     app: tauri::AppHandle,
 ) -> Result<Value, String> {
+    // Lock not strictly required (no hypa.json write here — caller persists via
+    // hypa_save_all), but acquired for read-after-write consistency with any
+    // ongoing mutation: a summary just generated should reflect any concurrent
+    // pin/invalidate when the caller subsequently saves.
+    let _guard = hypa_state.lock.lock().await;
+
     if messages.is_empty() {
         return Err("hypa_summarize: messages must be non-empty".into());
     }
@@ -403,8 +438,12 @@ fn parse_summary_text(raw: &str) -> String {
 pub async fn hypa_search(
     query_embedding: Vec<f64>,
     top_k: usize,
+    hypa_state: State<'_, HypaState>,
     app: tauri::AppHandle,
 ) -> Result<Value, String> {
+    // Read-only — lock acquired for read-after-write consistency only.
+    let _guard = hypa_state.lock.lock().await;
+
     if query_embedding.is_empty() {
         return Err("hypa_search: query_embedding must be non-empty".into());
     }
@@ -455,8 +494,14 @@ pub async fn hypa_search(
 pub async fn hypa_pin_message(
     chat_id: String,
     is_pinned: bool,
+    hypa_state: State<'_, HypaState>,
     app: tauri::AppHandle,
 ) -> Result<u32, String> {
+    // Critical section: load → mutate → save. Without this lock, two pin
+    // toggles fired together both load the same state and the second save
+    // overwrites the first.
+    let _guard = hypa_state.lock.lock().await;
+
     let mut data = load_hypa_data(&app)?;
     let mut affected: u32 = 0;
 
@@ -481,20 +526,42 @@ pub async fn hypa_pin_message(
     Ok(affected)
 }
 
-/// Mark every summary covering `chat_id` as invalidated and remove the chat id
-/// from their `chatMemos` list. Mirrors new-arona-bot delete-message cascade.
+/// Mark every summary covering `chat_id` as invalidated. Mirrors new-arona-bot
+/// delete-message cascade.
+///
+/// Soft-delete semantics: `chatMemos` is **not** modified — the audit trail
+/// (which messages this summary used to cover) is preserved even after those
+/// messages are deleted from the chat. This is intentional and load-bearing
+/// for two reasons:
+///   1. It distinguishes "summary covers no messages" (clean state) from
+///      "summary covered messages that were deleted" (invalidated state).
+///      `hypa_cleanup` only removes the former.
+///   2. A summary covering exactly one (now-deleted) message would otherwise
+///      be silently swept by `hypa_cleanup`, defeating invalidation as a
+///      durable record.
+///
+/// Filtering of invalidated summaries happens at read time:
+///   - `hypa_search` skips them via `filter(|(_, s)| !s.invalidated)`.
+///   - `hypa_pin_message` skips them via the `if s.invalidated { continue; }`
+///     guard, so pinning a deleted message is a no-op (the audit trail
+///     `chatMemos` still matches `chat_id`, but the invalidated flag wins).
 #[tauri::command]
 pub async fn hypa_invalidate_summary(
     chat_id: String,
+    hypa_state: State<'_, HypaState>,
     app: tauri::AppHandle,
 ) -> Result<u32, String> {
+    // Critical section: load → mutate → save (see hypa_pin_message).
+    let _guard = hypa_state.lock.lock().await;
+
     let mut data = load_hypa_data(&app)?;
     let mut affected: u32 = 0;
 
     for s in data.summaries.iter_mut() {
-        let len_before = s.chat_memos.len();
-        s.chat_memos.retain(|m| m != &chat_id);
-        if s.chat_memos.len() != len_before {
+        if s.invalidated {
+            continue;
+        }
+        if s.chat_memos.iter().any(|m| m == &chat_id) {
             s.invalidated = true;
             affected += 1;
         }
@@ -505,8 +572,20 @@ pub async fn hypa_invalidate_summary(
 }
 
 /// Drop summaries whose `chatMemos` is empty. Returns the number deleted.
+///
+/// Note: invalidated summaries are **not** dropped here — they retain their
+/// `chatMemos` (audit trail of covered messages) per `hypa_invalidate_summary`
+/// soft-delete semantics. Cleanup targets only summaries whose `chatMemos`
+/// was never populated (e.g. a summarize call that was rolled back before
+/// chat ids were assigned).
 #[tauri::command]
-pub async fn hypa_cleanup(app: tauri::AppHandle) -> Result<u32, String> {
+pub async fn hypa_cleanup(
+    hypa_state: State<'_, HypaState>,
+    app: tauri::AppHandle,
+) -> Result<u32, String> {
+    // Critical section: load → mutate → save.
+    let _guard = hypa_state.lock.lock().await;
+
     let mut data = load_hypa_data(&app)?;
     let before = data.summaries.len();
     data.summaries.retain(|s| !s.chat_memos.is_empty());
@@ -517,14 +596,29 @@ pub async fn hypa_cleanup(app: tauri::AppHandle) -> Result<u32, String> {
 
 /// Load all of hypa.json as raw JSON. Returns `{ "summaries": [] }` if file missing.
 #[tauri::command]
-pub async fn hypa_load_all(app: tauri::AppHandle) -> Result<Value, String> {
+pub async fn hypa_load_all(
+    hypa_state: State<'_, HypaState>,
+    app: tauri::AppHandle,
+) -> Result<Value, String> {
+    // Read-only — lock acquired for read-after-write consistency only.
+    let _guard = hypa_state.lock.lock().await;
+
     let data_dir = persistence::get_data_dir(&app)?;
     persistence::load_hypa(&data_dir)
 }
 
-/// Save the entire hypa.json. Pretty-printed.
+/// Save the entire hypa.json. Pretty-printed (atomic write — see persistence::save_hypa).
 #[tauri::command]
-pub async fn hypa_save_all(summaries: Value, app: tauri::AppHandle) -> Result<(), String> {
+pub async fn hypa_save_all(
+    summaries: Value,
+    hypa_state: State<'_, HypaState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    // Critical section: this is a wholesale replace. Without the lock, an
+    // interleaved pin/invalidate could be silently overwritten by a stale
+    // save_all snapshot the frontend computed before the mutation.
+    let _guard = hypa_state.lock.lock().await;
+
     let data_dir = persistence::get_data_dir(&app)?;
     persistence::save_hypa(&data_dir, &summaries)
 }

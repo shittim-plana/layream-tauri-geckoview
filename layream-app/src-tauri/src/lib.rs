@@ -18,6 +18,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(commands::AuthState::default())
         .manage(commands::RequestLogState::default())
+        .manage(commands_hypa::HypaState::default())
         .setup(|app| {
             let auth_state = app.state::<commands::AuthState>();
             auth_state.load_persisted_tokens(app.handle());

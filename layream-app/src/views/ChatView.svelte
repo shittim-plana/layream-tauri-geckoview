@@ -103,12 +103,11 @@
     const model = h.embeddingModel || "gemini-embedding-2";
     try {
       if (provider === "vertex") {
-        const v = settings.vertexConfig || {};
         const result = await invoke("embed_vertex", {
           texts: [text],
           model,
           project_id: settings.vertexProjectId || "",
-          region: settings.vertexRegion || v.region || "us-central1",
+          region: settings.vertexRegion || "us-central1",
         });
         return Array.isArray(result?.[0]) ? result[0] : null;
       } else if (provider === "voyage") {
@@ -143,7 +142,7 @@
             const hits = await hypaApi.getRagContext(queryEmbedding, 5);
             if (Array.isArray(hits) && hits.length > 0) {
               const memoryText = hits
-                .map(h => h?.summary?.text || h?.text)
+                .map(h => h?.summary?.text)
                 .filter(Boolean)
                 .join("\n\n");
               if (memoryText) {
@@ -213,7 +212,7 @@
         // HyPA: trigger auto-summarization at unit boundaries
         if (hypaApi?.triggerSummarizationIfNeeded) {
           const h = settings.hypa || {};
-          hypaApi.triggerSummarizationIfNeeded(messages, h.summaryUnit ?? 10).catch(e => {
+          hypaApi.triggerSummarizationIfNeeded(messages, h.summaryUnit).catch(e => {
             console.warn("auto-summarize failed:", e);
           });
         }

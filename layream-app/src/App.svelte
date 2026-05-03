@@ -70,15 +70,18 @@
 {/if}
 
 <div class="content">
-  {#if activeTab === "preset"}
+  <div style:display={activeTab === "preset" ? "block" : "none"}>
     <PresetView />
-  {:else if activeTab === "character"}
+  </div>
+  <div style:display={activeTab === "character" ? "block" : "none"}>
     <CharacterView />
-  {:else if activeTab === "test"}
+  </div>
+  <div style:display={activeTab === "test" ? "block" : "none"}>
     <TestView />
-  {:else if activeTab === "settings"}
+  </div>
+  <div style:display={activeTab === "settings" ? "block" : "none"}>
     <SettingsView />
-  {/if}
+  </div>
 </div>
 
 <nav class="nav-bar">

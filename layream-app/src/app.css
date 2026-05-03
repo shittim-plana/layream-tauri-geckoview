@@ -480,8 +480,7 @@ button {
   padding: 12px;
   background: var(--bg2);
   border-top: 1px solid var(--bg4);
-  position: sticky;
-  bottom: 0;
+  flex-shrink: 0;
 }
 
 .chat-input {

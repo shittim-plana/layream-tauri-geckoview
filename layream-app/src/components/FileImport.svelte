@@ -37,7 +37,7 @@
               reader.onerror = () => rej(reader.error);
               reader.readAsArrayBuffer(file);
             });
-            const data = [...new Uint8Array(buf)];
+            const data = new Uint8Array(buf);
             if (typeof onfile === "function") {
               try {
                 await onfile(file.name, data);
@@ -82,7 +82,7 @@
             reader.onerror = () => rej(reader.error);
             reader.readAsArrayBuffer(file);
           });
-          onfile?.(file.name, Array.from(new Uint8Array(buf)));
+          onfile?.(file.name, new Uint8Array(buf));
         } catch (err) { debugMsg = `error: ${err}`; }
         loading = false;
       })();

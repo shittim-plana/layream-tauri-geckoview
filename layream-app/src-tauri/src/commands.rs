@@ -870,9 +870,74 @@ pub async fn gca_check_opt_out(
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    use tauri_plugin_shell::ShellExt;
-    #[allow(deprecated)]
-    app.shell().open(&url, None).map_err(|e| e.to_string())
+    #[cfg(target_os = "android")]
+    {
+        let handle = app.state::<crate::browser::BrowserHandle<tauri::Wry>>();
+        handle
+            .0
+            .run_mobile_plugin::<()>("openBrowser", url)
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        use tauri_plugin_shell::ShellExt;
+        #[allow(deprecated)]
+        app.shell().open(&url, None).map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn start_streaming(app: tauri::AppHandle, text: Option<String>) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        let handle = app.state::<crate::streaming_service::StreamingServiceHandle<tauri::Wry>>();
+        let payload = text.unwrap_or_else(|| "AI 응답 수신 중...".to_string());
+        handle
+            .0
+            .run_mobile_plugin::<()>("startStreaming", payload)
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        let _ = text;
+        Ok(())
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn stop_streaming(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        let handle = app.state::<crate::streaming_service::StreamingServiceHandle<tauri::Wry>>();
+        handle
+            .0
+            .run_mobile_plugin::<()>("stopStreaming", ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(())
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn update_notification(app: tauri::AppHandle, text: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        let handle = app.state::<crate::streaming_service::StreamingServiceHandle<tauri::Wry>>();
+        handle
+            .0
+            .run_mobile_plugin::<()>("updateNotification", text)
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        let _ = text;
+        Ok(())
+    }
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1148,4 +1213,86 @@ pub fn cmd_save_current_character(character: Value, app: tauri::AppHandle) -> Re
 pub fn cmd_load_current_character(app: tauri::AppHandle) -> Result<Value, String> {
     let data_dir = persistence::get_data_dir(&app)?;
     persistence::load_current_character(&data_dir)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Library commands. Three kinds × four ops = twelve commands. Each kind
+// gets the same shape (save/list/load/delete) so callers can write a
+// generic helper on the JS side. The inner `library_*` functions in
+// persistence enforce id safety and atomic writes.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn library_save_preset(name: String, data: Value, app: tauri::AppHandle) -> Result<String, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::library_save(&data_dir, persistence::LIB_KIND_PRESET, &name, &data)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn library_list_presets(app: tauri::AppHandle) -> Result<Value, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    let items = persistence::library_list(&data_dir, persistence::LIB_KIND_PRESET)?;
+    Ok(Value::Array(items))
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn library_load_preset(id: String, app: tauri::AppHandle) -> Result<Value, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::library_load(&data_dir, persistence::LIB_KIND_PRESET, &id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn library_delete_preset(id: String, app: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::library_delete(&data_dir, persistence::LIB_KIND_PRESET, &id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn library_save_character(name: String, data: Value, app: tauri::AppHandle) -> Result<String, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::library_save(&data_dir, persistence::LIB_KIND_CHARACTER, &name, &data)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn library_list_characters(app: tauri::AppHandle) -> Result<Value, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    let items = persistence::library_list(&data_dir, persistence::LIB_KIND_CHARACTER)?;
+    Ok(Value::Array(items))
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn library_load_character(id: String, app: tauri::AppHandle) -> Result<Value, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::library_load(&data_dir, persistence::LIB_KIND_CHARACTER, &id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn library_delete_character(id: String, app: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::library_delete(&data_dir, persistence::LIB_KIND_CHARACTER, &id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn library_save_module(name: String, data: Value, app: tauri::AppHandle) -> Result<String, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::library_save(&data_dir, persistence::LIB_KIND_MODULE, &name, &data)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn library_list_modules(app: tauri::AppHandle) -> Result<Value, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    let items = persistence::library_list(&data_dir, persistence::LIB_KIND_MODULE)?;
+    Ok(Value::Array(items))
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn library_load_module(id: String, app: tauri::AppHandle) -> Result<Value, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::library_load(&data_dir, persistence::LIB_KIND_MODULE, &id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn library_delete_module(id: String, app: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::library_delete(&data_dir, persistence::LIB_KIND_MODULE, &id)
 }

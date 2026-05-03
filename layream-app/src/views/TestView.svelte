@@ -37,10 +37,23 @@
   async function loadPreview() {
     previewLoading = true;
     try {
+      let charName = "Character";
+      let userName = "User";
+      try {
+        const ch = await invoke("cmd_load_current_character");
+        const cardName = ch?.card?.data?.name || ch?.card?.name;
+        if (typeof cardName === "string" && cardName.length > 0) charName = cardName;
+      } catch (_) {}
+      try {
+        const settings = await invoke("cmd_load_settings");
+        if (typeof settings?.userName === "string" && settings.userName.length > 0) {
+          userName = settings.userName;
+        }
+      } catch (_) {}
       previewText = await invoke("evaluate_cbs", {
         input: "{{// Prompt preview requires a loaded preset}}",
-        char_name: "Character",
-        user_name: "User",
+        char_name: charName,
+        user_name: userName,
       });
     } catch (e) {
       previewText = `Error: ${e}`;

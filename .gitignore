@@ -3,7 +3,10 @@
 **/dist/
 *.apk
 *.aab
-**/gen/android/
+**/gen/android/.gradle/
+**/gen/android/app/build/
+**/gen/android/buildSrc/build/
+**/gen/android/local.properties
 **/gen/schemas/
 .claude/
 PLAN.md

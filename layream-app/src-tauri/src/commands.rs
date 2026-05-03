@@ -16,7 +16,7 @@ use layream_core::gca::{GCA_OAUTH_CLIENT_ID, GCA_OAUTH_CLIENT_SECRET, GCA_OAUTH_
 use layream_core::voyage;
 use serde_json::Value;
 use std::sync::Mutex;
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 
 use std::collections::HashMap;
 
@@ -97,7 +97,7 @@ pub async fn load_character(
     data: Vec<u8>,
     asset_state: State<'_, CharacterAssetsState>,
 ) -> Result<Value, String> {
-    let result = tokio::task::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || -> Result<_, String> {
         let ch = charx::read_character(&name, &data).map_err(|e| e.to_string())?;
         let card_json = match &ch.card {
             Some(charx::CardData::V2(card)) => serde_json::to_value(card).ok(),
@@ -119,7 +119,8 @@ pub async fn load_character(
         Ok((json, ch.assets))
     })
     .await
-    .map_err(|e| e.to_string())??;
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
 
     *asset_state.assets.lock().unwrap() = result.1;
     Ok(result.0)
@@ -140,10 +141,11 @@ pub async fn load_preset_from_path(name: String, temp_name: String, app: tauri::
     let path = data_dir.join(&temp_name);
     let data = std::fs::read(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
     let _ = std::fs::remove_file(&path);
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> Result<Value, String> {
         let p = preset::read_preset(&name, &data).map_err(|e| e.to_string())?;
         serde_json::to_value(&p).map_err(|e| e.to_string())
     }).await.map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -155,7 +157,7 @@ pub async fn load_character_from_path(
     let path = data_dir.join(&temp_name);
     let data = std::fs::read(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
     let _ = std::fs::remove_file(&path);
-    let result = tokio::task::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || -> Result<_, String> {
         let ch = charx::read_character(&name, &data).map_err(|e| e.to_string())?;
         let card_json = match &ch.card {
             Some(charx::CardData::V2(card)) => serde_json::to_value(card).ok(),
@@ -165,7 +167,8 @@ pub async fn load_character_from_path(
         let asset_list: Vec<Value> = ch.assets.iter().map(|(n, d)| serde_json::json!({"name": n, "size": d.len()})).collect();
         let json = serde_json::json!({"card": card_json, "assetCount": ch.assets.len(), "assetList": asset_list, "hasModule": ch.module_data.is_some()});
         Ok((json, ch.assets))
-    }).await.map_err(|e| e.to_string())??;
+    }).await.map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
     *asset_state.assets.lock().unwrap() = result.1;
     Ok(result.0)
 }
@@ -176,9 +179,10 @@ pub async fn parse_risum_from_path(temp_name: String, app: tauri::AppHandle) -> 
     let path = data_dir.join(&temp_name);
     let data = std::fs::read(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
     let _ = std::fs::remove_file(&path);
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> Result<Value, String> {
         preset::parse_risum_data(&data).map_err(|e| e.to_string())
     }).await.map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command(rename_all = "snake_case")]

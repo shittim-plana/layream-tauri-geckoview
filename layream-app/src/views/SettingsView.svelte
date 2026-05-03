@@ -316,29 +316,6 @@
     if (gcaStatus?.connected && !gcaStatus?.expired) {
       loadGcaProfile();
     }
-
-    // Deep-link listener for Vertex OAuth callback
-    try {
-      const { onOpenUrl } = await import("@tauri-apps/plugin-deep-link");
-      await onOpenUrl((urls) => {
-        for (const url of urls) {
-          try {
-            const parsed = new URL(url);
-            if (parsed.host === "oauth" && parsed.pathname.startsWith("/callback")) {
-              const code = parsed.searchParams.get("code");
-              if (code) {
-                invoke("vertex_oauth_callback", { code }).then(() => {
-                  checkVertexStatus();
-                  dbg("Vertex OAuth callback success");
-                }).catch(e => dbg(`Vertex callback error: ${e}`));
-              }
-            }
-          } catch (parseErr) {
-            dbg(`Deep-link parse error: ${parseErr}`);
-          }
-        }
-      });
-    } catch (e) { dbg(`Deep-link listener setup: ${e}`); }
   });
 
   function statusText(status) {

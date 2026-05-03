@@ -67,7 +67,7 @@
     This mirrors App.svelte's top-level always-mount pattern.
   -->
   <div style:display={subTab === "chat" ? "block" : "none"}>
-    <ChatView onReady={(api) => chatApi = api} />
+    <ChatView onReady={(api) => chatApi = api} {hypaApi} />
   </div>
 
   <div style:display={subTab === "autopilot" ? "block" : "none"}>

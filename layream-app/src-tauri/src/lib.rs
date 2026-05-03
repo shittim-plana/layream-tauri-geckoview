@@ -18,6 +18,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(commands::AuthState::default())
         .manage(commands::RequestLogState::default())
+        .manage(commands::CharacterAssetsState::default())
         .manage(commands_hypa::HypaState::default())
         .setup(|app| {
             let auth_state = app.state::<commands::AuthState>();
@@ -58,7 +59,14 @@ pub fn run() {
             commands::cmd_save_session,
             commands::cmd_load_session,
             commands::parse_risum,
+            commands::load_preset_from_path,
+            commands::load_character_from_path,
+            commands::parse_risum_from_path,
             commands::generate_user_message,
+            commands::save_file_to_downloads,
+            commands::get_asset_data,
+            commands::cmd_save_current_character,
+            commands::cmd_load_current_character,
             commands_hypa::hypa_summarize,
             commands_hypa::hypa_search,
             commands_hypa::hypa_pin_message,

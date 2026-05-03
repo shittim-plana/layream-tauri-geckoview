@@ -276,6 +276,7 @@ pub fn urlencoded(s: &str) -> String {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
                 String::from(b as char)
             }
+            b' ' => String::from('+'),
             _ => format!("%{:02X}", b),
         })
         .collect()
@@ -330,5 +331,24 @@ mod tests {
         };
         assert!(!far_future.is_expired());
         assert!(!far_future.needs_refresh());
+    }
+
+    #[test]
+    fn urlencoded_space_as_plus() {
+        assert_eq!(urlencoded("select_account consent"), "select_account+consent");
+        assert_eq!(urlencoded("a b c"), "a+b+c");
+        assert_eq!(urlencoded("no_spaces"), "no_spaces");
+    }
+
+    #[test]
+    fn auth_url_prompt_encoding() {
+        let creds = OAuthCredentials {
+            client_id: "test".into(),
+            client_secret: None,
+            redirect_uri: "http://localhost/cb".into(),
+        };
+        let url = build_auth_url(&creds, None);
+        assert!(url.contains("prompt=select_account+consent"));
+        assert!(!url.contains("%20"));
     }
 }

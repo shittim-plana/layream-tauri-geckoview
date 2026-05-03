@@ -1973,6 +1973,7 @@ dependencies = [
 name = "layream-app"
 version = "0.2.1"
 dependencies = [
+ "base64 0.22.1",
  "layream-core",
  "log",
  "reqwest 0.12.28",

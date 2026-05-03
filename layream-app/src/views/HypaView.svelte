@@ -20,9 +20,9 @@
   let hypaImportStatus = $state("");
   let hypaActionStatus = $state("");
   let modalSummary = $state(null);
-  // last-seen length used by triggerSummarizationIfNeeded() to fire exactly once
-  // per crossing of a summaryUnit boundary.
-  let lastSummarizedAt = 0;
+  function getMinSummarizedAt() {
+    return (hypaSummaries.length || 0) * (Number(hypaSummaryUnit) || 10);
+  }
   // app-flush listener cleanup handle. Set in onMount, called in onDestroy.
   let unlistenAppFlush;
 
@@ -233,12 +233,11 @@
     const unit = Number(summaryUnit ?? hypaSummaryUnit) || 0;
     if (unit < 2) return null;
     if (!Array.isArray(messages) || messages.length < unit) return null;
-    // Fire only when crossing a unit boundary AND we haven't already fired
-    // for this length. lastSummarizedAt persists across calls within this
-    // component instance.
+    // Fire only when crossing a unit boundary AND we haven't already
+    // summarized past this point. Derived from persisted hypaSummaries.length
+    // so the gate survives component remount.
     if (messages.length % unit !== 0) return null;
-    if (messages.length <= lastSummarizedAt) return null;
-    lastSummarizedAt = messages.length;
+    if (messages.length <= getMinSummarizedAt()) return null;
     const slice = messages.slice(messages.length - unit);
     try {
       const result = await invoke("hypa_summarize", {

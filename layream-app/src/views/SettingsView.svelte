@@ -405,13 +405,6 @@
       </div>
 
       <div class="field">
-        <label class="label">Embedding Model</label>
-        <select class="select" bind:value={vertexEmbeddingModel} onchange={scheduleSettingsSave}>
-          {#each VERTEX_EMBEDDING_MODELS as m}<option value={m}>{m}</option>{/each}
-        </select>
-      </div>
-
-      <div class="field">
         <label class="label">Temperature: {vertexConfig.temperature}</label>
         <input type="range" min="0" max="2" step="0.1" bind:value={vertexConfig.temperature} onchange={scheduleSettingsSave} />
       </div>
@@ -638,19 +631,30 @@
     </div>
   </div>
 
-  <!-- Voyage AI -->
+  <!-- Embedding -->
   <div class="card">
-    <div class="card-header"><span class="card-title">Voyage AI (Embeddings)</span></div>
+    <div class="card-header"><span class="card-title">Embedding</span></div>
     <div class="card-body">
-      <div class="field">
-        <label class="label">API Key</label>
-        <input class="input" type="password" bind:value={voyageKey} placeholder="pa-..." onchange={scheduleSettingsSave} />
-      </div>
-      <div class="field">
-        <label class="label">Model</label>
-        <input class="input" type="text" bind:value={voyageModel} onchange={scheduleSettingsSave} />
-      </div>
-      <p style="font-size: 11px; color: var(--fg3); margin-top: 4px;">Used for HyPA v3 long-term memory</p>
+      <p style="font-size: 12px; color: var(--fg2); margin-bottom: 12px;">HyPA v3 장기 기억에 사용되는 임베딩 설정</p>
+
+      {#if embeddingProvider === "vertex"}
+        <div class="field">
+          <label class="label">Vertex Embedding Model</label>
+          <select class="select" bind:value={vertexEmbeddingModel} onchange={scheduleSettingsSave}>
+            {#each VERTEX_EMBEDDING_MODELS as m}<option value={m}>{m}</option>{/each}
+          </select>
+        </div>
+        <p style="font-size: 11px; color: var(--fg3);">Vertex AI OAuth 연결 필요</p>
+      {:else}
+        <div class="field">
+          <label class="label">Voyage API Key</label>
+          <input class="input" type="password" bind:value={voyageKey} placeholder="pa-..." onchange={scheduleSettingsSave} />
+        </div>
+        <div class="field">
+          <label class="label">Voyage Model</label>
+          <input class="input" type="text" bind:value={voyageModel} onchange={scheduleSettingsSave} />
+        </div>
+      {/if}
     </div>
   </div>
 

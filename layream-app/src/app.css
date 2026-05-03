@@ -586,3 +586,17 @@ button {
 }
 
 .animate-in { animation: fadeIn 0.2s ease-out; }
+
+.gradient-loading {
+  background: linear-gradient(90deg, var(--fg3), var(--accent), var(--fg3));
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: gradientShift 1.5s ease-in-out infinite;
+}
+
+@keyframes gradientShift {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

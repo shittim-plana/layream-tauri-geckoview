@@ -127,12 +127,11 @@
   ondragleave={() => { dragover = false; }}
 >
   {#if loading}
-    <div class="spinner"></div>
     {#if loadingFile}
-      <p style="font-size: 13px; color: var(--fg2); margin-top: 8px; word-break: break-all;">{loadingFile}</p>
-      <p style="font-size: 11px; color: var(--fg3);">{loadingSize < 1024*1024 ? (loadingSize/1024).toFixed(1) + ' KB' : (loadingSize/(1024*1024)).toFixed(1) + ' MB'}</p>
+      <p class="gradient-loading" style="font-size: 14px; font-weight: 500; margin-bottom: 4px; word-break: break-all;">{loadingFile}</p>
+      <p class="gradient-loading" style="font-size: 12px;">{loadingSize < 1024*1024 ? (loadingSize/1024).toFixed(1) + ' KB' : (loadingSize/(1024*1024)).toFixed(1) + ' MB'}</p>
     {:else}
-      <p>Loading...</p>
+      <p class="gradient-loading" style="font-size: 14px; font-weight: 500;">Loading...</p>
     {/if}
   {:else}
     <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">

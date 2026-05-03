@@ -263,8 +263,8 @@
         </div>
       {/if}
 
-      <!-- Regex Scripts (from extensions.risuai.customScripts) -->
-      {@const regexScripts = data.extensions?.risuai?.customScripts || []}
+      <!-- Regex Scripts -->
+      {@const regexScripts = data.customScripts || data.extensions?.risuai?.customScripts || []}
       {#if regexScripts.length > 0}
         <div class="card">
           <div class="card-header">
@@ -342,6 +342,8 @@
 
     <!-- Assets Tab -->
     {#if subTab === "assets"}
+      {@const additionalAssets = data?.extensions?.risuai?.additionalAssets || data?.additionalAssets || []}
+      {@const assetNameMap = Object.fromEntries(additionalAssets.map(a => [a[0], a[1]]))}
       <div class="card">
         <div class="card-header">
           <span class="card-title">Assets ({character.assetCount})</span>
@@ -350,12 +352,13 @@
           {#if character.assetList?.length > 0}
             <div style="display: flex; flex-direction: column; gap: 4px;">
               {#each character.assetList as asset}
+                {@const displayName = assetNameMap[asset.name] || asset.name.split('/').pop()}
                 <div
                   style="padding: 6px 8px; background: var(--bg3); border-radius: var(--radius-sm); {isImage(asset.name) ? 'cursor: pointer;' : ''}"
                   onclick={() => isImage(asset.name) && loadAssetPreview(asset.name)}
                 >
                   <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="font-size: 13px; color: {isImage(asset.name) ? 'var(--accent)' : 'var(--fg1)'}; word-break: break-all;">{asset.name}</span>
+                    <span style="font-size: 13px; color: {isImage(asset.name) ? 'var(--accent)' : 'var(--fg1)'}; word-break: break-all;">{displayName}</span>
                     <span style="font-size: 12px; color: var(--fg3); white-space: nowrap; margin-left: 12px;">{formatBytes(asset.size)}</span>
                   </div>
                   {#if previewAsset === asset.name}

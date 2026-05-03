@@ -1,8 +1,10 @@
 use tauri::Manager;
 
+mod browser;
 mod commands;
 mod commands_hypa;
 mod persistence;
+mod streaming_service;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -16,6 +18,8 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(browser::init())
+        .plugin(streaming_service::init())
         .manage(commands::AuthState::default())
         .manage(commands::RequestLogState::default())
         .manage(commands::CharacterAssetsState::default())
@@ -54,6 +58,9 @@ pub fn run() {
             commands::gca_load_code_assist,
             commands::gca_check_opt_out,
             commands::open_url,
+            commands::start_streaming,
+            commands::stop_streaming,
+            commands::update_notification,
             commands::cmd_save_current_preset,
             commands::cmd_load_current_preset,
             commands::cmd_save_session,
@@ -67,6 +74,18 @@ pub fn run() {
             commands::get_asset_data,
             commands::cmd_save_current_character,
             commands::cmd_load_current_character,
+            commands::library_save_preset,
+            commands::library_list_presets,
+            commands::library_load_preset,
+            commands::library_delete_preset,
+            commands::library_save_character,
+            commands::library_list_characters,
+            commands::library_load_character,
+            commands::library_delete_character,
+            commands::library_save_module,
+            commands::library_list_modules,
+            commands::library_load_module,
+            commands::library_delete_module,
             commands_hypa::hypa_summarize,
             commands_hypa::hypa_search,
             commands_hypa::hypa_pin_message,

@@ -5,6 +5,11 @@
   let debugLog = $state("");
   function dbg(msg) { debugLog = msg; }
 
+  // --- User Persona ---
+  // userName is referenced as {{user}} in CBS templates and used as a fallback
+  // when a character card does not specify a persona name.
+  let userName = $state("User");
+
   // --- Provider Assignment ---
   let chatProvider = $state("vertex");
   let summaryProvider = $state("vertex");
@@ -279,6 +284,7 @@
 
   function collectSettings() {
     return {
+      userName,
       chatProvider, summaryProvider, embeddingProvider,
       vertexProjectId, vertexRegion, vertexModel, vertexEmbeddingModel, vertexConfig,
       gcaModel, gcaConfig,
@@ -289,6 +295,7 @@
 
   function applySettings(s) {
     if (!s || typeof s !== "object") return;
+    if (typeof s.userName === "string" && s.userName.length > 0) userName = s.userName;
     if (s.chatProvider !== undefined) chatProvider = s.chatProvider;
     if (s.summaryProvider !== undefined) summaryProvider = s.summaryProvider;
     if (s.embeddingProvider !== undefined) embeddingProvider = s.embeddingProvider;
@@ -334,6 +341,23 @@
 </script>
 
 <div>
+  <!-- User Persona -->
+  <div class="card">
+    <div class="card-header"><span class="card-title">User Persona</span></div>
+    <div class="card-body">
+      <div class="field">
+        <label class="label">Display name (used as &#123;&#123;user&#125;&#125; in CBS)</label>
+        <input
+          class="input"
+          type="text"
+          bind:value={userName}
+          oninput={scheduleSettingsSave}
+          placeholder="User"
+        />
+      </div>
+    </div>
+  </div>
+
   <!-- Provider Assignment -->
   <div class="card">
     <div class="card-header"><span class="card-title">Provider Assignment</span></div>

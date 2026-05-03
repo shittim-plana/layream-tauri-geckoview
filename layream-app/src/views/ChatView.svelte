@@ -12,7 +12,9 @@
   let streaming = $state(false);
   let sessionLoaded = $state(false);
   let streamingText = $state("");
-  let chatContainer;
+  // Sentinel scrolled into view on new messages — keeps the latest message
+  // visible regardless of which ancestor element actually owns the scroll.
+  let chatBottom;
   let unlisten;
   let unlistenAppFlush;
   let sessionSaveTimeout;
@@ -78,9 +80,9 @@
   $effect(() => {
     messages;
     streamingText;
-    if (chatContainer) {
+    if (chatBottom) {
       requestAnimationFrame(() => {
-        chatContainer.scrollTop = chatContainer.scrollHeight;
+        chatBottom.scrollIntoView({ block: "end", behavior: "auto" });
       });
     }
   });
@@ -263,8 +265,14 @@
   }
 </script>
 
-<div style="display: flex; flex-direction: column; height: calc(100dvh - env(safe-area-inset-top, 0px) - 184px - env(safe-area-inset-bottom, 0px));">
-  <div bind:this={chatContainer} style="flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 12px;">
+<!--
+  Layout: messages flow in normal block flow within the parent .content
+  scroll context. The chat-input-bar uses position: sticky bottom: 0 so it
+  remains visible regardless of message volume — no fragile height
+  calculations against viewport units.
+-->
+<div class="chat-view">
+  <div class="chat-messages">
     {#if messages.length === 0}
       <div class="empty-state">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -293,6 +301,8 @@
         </div>
       </div>
     {/if}
+
+    <div bind:this={chatBottom} aria-hidden="true"></div>
   </div>
 
   <div class="chat-input-bar">
@@ -315,3 +325,16 @@
     </button>
   </div>
 </div>
+
+<style>
+  .chat-messages {
+    /* Bottom space so the final message is not hidden by the sticky input
+       bar. Sized to roughly match the input bar's content height. */
+    padding-bottom: 8px;
+  }
+  .chat-input-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+  }
+</style>

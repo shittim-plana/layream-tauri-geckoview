@@ -17,6 +17,10 @@
   let previewData = $state("");
   let previewLoading = $state(false);
 
+  // Greeting switcher: -1 selects data.first_mes; 0..N-1 selects
+  // data.alternate_greetings[i]. Reset on character (re)load via $effect.
+  let greetingIndex = $state(-1);
+
   const IMG_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
   function isImage(name) {
     return IMG_EXTS.some(ext => name.toLowerCase().endsWith(ext));
@@ -96,6 +100,28 @@
     moduleParsed = null;
     moduleInfo = "";
     moduleError = "";
+    greetingIndex = -1;
+  }
+
+  // Total greeting count: first_mes counts as 1 if present, plus each
+  // alternate_greetings entry. Used to bound the prev/next navigation.
+  function greetingCount(d) {
+    const altLen = d?.alternate_greetings?.length || 0;
+    const hasFirst = typeof d?.first_mes === "string" && d.first_mes.length > 0;
+    return (hasFirst ? 1 : 0) + altLen;
+  }
+
+  function getGreeting(d, idx) {
+    if (idx < 0) return d?.first_mes ?? "";
+    return d?.alternate_greetings?.[idx] ?? "";
+  }
+
+  function setGreeting(d, idx, value) {
+    if (idx < 0) {
+      d.first_mes = value;
+    } else if (Array.isArray(d?.alternate_greetings)) {
+      d.alternate_greetings[idx] = value;
+    }
   }
 
   function cardData() {
@@ -219,28 +245,38 @@
         </div>
       {/if}
 
-      {#if data.first_mes}
-        <div class="card">
-          <div class="card-header"><span class="card-title">First Message</span></div>
-          <div class="card-body">
-            <textarea class="textarea" rows="4" bind:value={data.first_mes}></textarea>
-          </div>
-        </div>
-      {/if}
-
-      <!-- Alternate Greetings -->
-      {#if data.alternate_greetings?.length > 0}
+      {@const greetTotal = greetingCount(data)}
+      {#if greetTotal > 0}
+        {@const altLen = data.alternate_greetings?.length || 0}
+        {@const hasFirst = typeof data.first_mes === "string" && data.first_mes.length > 0}
+        {@const minIdx = hasFirst ? -1 : 0}
+        {@const safeIdx = Math.max(minIdx, Math.min(greetingIndex, altLen - 1))}
+        {@const label = safeIdx < 0 ? "First Message" : `Alternate #${safeIdx + 1}`}
+        {@const position = safeIdx < 0 ? 1 : (hasFirst ? safeIdx + 2 : safeIdx + 1)}
         <div class="card">
           <div class="card-header">
-            <span class="card-title">Alternate Greetings ({data.alternate_greetings.length})</span>
+            <span class="card-title">{label}</span>
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <button
+                class="btn btn-sm btn-secondary"
+                disabled={safeIdx <= minIdx}
+                onclick={() => greetingIndex = safeIdx - 1}
+              >‹</button>
+              <span style="font-size: 12px; color: var(--fg3);">{position}/{greetTotal}</span>
+              <button
+                class="btn btn-sm btn-secondary"
+                disabled={safeIdx >= altLen - 1}
+                onclick={() => greetingIndex = safeIdx + 1}
+              >›</button>
+            </div>
           </div>
           <div class="card-body">
-            {#each data.alternate_greetings as greeting, i}
-              <div style="padding: 8px 0; {i > 0 ? 'border-top: 1px solid var(--bg4);' : ''}">
-                <label class="label" style="margin-bottom: 4px;">Greeting #{i + 1}</label>
-                <textarea class="textarea" rows="3" bind:value={data.alternate_greetings[i]}></textarea>
-              </div>
-            {/each}
+            <textarea
+              class="textarea"
+              rows="4"
+              value={getGreeting(data, safeIdx)}
+              oninput={(e) => setGreeting(data, safeIdx, e.target.value)}
+            ></textarea>
           </div>
         </div>
       {/if}

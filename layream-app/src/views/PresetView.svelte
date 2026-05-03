@@ -15,6 +15,11 @@
   let previewText = $state("");
   let showPreview = $state(false);
 
+  // CBS preview context — loaded once on mount; falls back to placeholder
+  // names so previews remain meaningful when no character/settings are saved.
+  let charName = $state("Character");
+  let userName = $state("User");
+
   const TYPE_COLORS = {
     plain: "var(--type-plain)", jailbreak: "var(--type-jailbreak)", cot: "var(--type-cot)",
     chat: "var(--type-chat)", description: "var(--type-description)", persona: "var(--type-persona)",
@@ -123,7 +128,7 @@
     if (!preset?.promptTemplate?.[editingIndex]) return;
     const text = getItemText(preset.promptTemplate[editingIndex]);
     try {
-      previewText = await invoke("evaluate_cbs", { input: text, char_name: "Character", user_name: "User" });
+      previewText = await invoke("evaluate_cbs", { input: text, char_name: charName, user_name: userName });
     } catch (e) {
       previewText = `Error: ${e}`;
     }
@@ -149,6 +154,21 @@
       }
     } catch (e) {
       console.warn("Load preset failed:", e);
+    }
+    try {
+      const ch = await invoke("cmd_load_current_character");
+      const cardName = ch?.card?.data?.name || ch?.card?.name;
+      if (typeof cardName === "string" && cardName.length > 0) charName = cardName;
+    } catch (e) {
+      console.warn("Load character for CBS preview failed:", e);
+    }
+    try {
+      const settings = await invoke("cmd_load_settings");
+      if (typeof settings?.userName === "string" && settings.userName.length > 0) {
+        userName = settings.userName;
+      }
+    } catch (e) {
+      console.warn("Load settings for CBS preview failed:", e);
     }
   });
 </script>

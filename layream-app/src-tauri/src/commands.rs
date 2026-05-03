@@ -236,6 +236,8 @@ pub async fn chat_vertex(
             thinking_config,
             top_p,
             top_k,
+            response_mime_type: None,
+            response_schema: None,
         },
         tools: if tools.is_empty() { None } else { Some(tools) },
     };
@@ -321,6 +323,8 @@ pub async fn chat_gca(
             thinking_config,
             top_p,
             top_k,
+            response_mime_type: None,
+            response_schema: None,
         },
         tools: if tools.is_empty() { None } else { Some(tools) },
     };
@@ -893,6 +897,8 @@ pub async fn generate_user_message(
                     thinking_config: None,
                     top_p: None,
                     top_k: None,
+                    response_mime_type: None,
+                    response_schema: None,
                 },
                 tools: None,
             };
@@ -944,6 +950,8 @@ pub async fn generate_user_message(
                     thinking_config: None,
                     top_p: None,
                     top_k: None,
+                    response_mime_type: None,
+                    response_schema: None,
                 },
                 tools: None,
             };

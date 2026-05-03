@@ -60,6 +60,13 @@ pub fn run() {
             commands::cmd_load_session,
             commands::parse_risum,
             commands::generate_user_message,
+            commands_hypa::hypa_summarize,
+            commands_hypa::hypa_search,
+            commands_hypa::hypa_pin_message,
+            commands_hypa::hypa_invalidate_summary,
+            commands_hypa::hypa_cleanup,
+            commands_hypa::hypa_load_all,
+            commands_hypa::hypa_save_all,
         ])
         .run(tauri::generate_context!());
 

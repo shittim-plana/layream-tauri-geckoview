@@ -854,9 +854,17 @@ pub async fn generate_user_message(
     region: Option<String>,
     project_id: Option<String>,
     api_key: Option<String>,
+    persona: Option<String>,
+    response_schema: Option<Value>,
     state: State<'_, AuthState>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
+    let system_prompt = match persona.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(p) => format!("{}\n\nPersona:\n{}", USER_MSG_SYSTEM_PROMPT, p),
+        None => USER_MSG_SYSTEM_PROMPT.to_string(),
+    };
+    let response_mime_type = response_schema.as_ref().map(|_| "application/json".to_string());
+
     match provider.as_str() {
         "vertex" => {
             let project_id = project_id.ok_or("project_id required for vertex")?;
@@ -885,7 +893,7 @@ pub async fn generate_user_message(
                 system_instruction: Some(Content {
                     role: "user".to_string(),
                     parts: vec![Part {
-                        text: Some(USER_MSG_SYSTEM_PROMPT.to_string()),
+                        text: Some(system_prompt.clone()),
                         thought: None,
                         inline_data: None,
                     }],
@@ -897,8 +905,8 @@ pub async fn generate_user_message(
                     thinking_config: None,
                     top_p: None,
                     top_k: None,
-                    response_mime_type: None,
-                    response_schema: None,
+                    response_mime_type: response_mime_type.clone(),
+                    response_schema: response_schema.clone(),
                 },
                 tools: None,
             };
@@ -938,7 +946,7 @@ pub async fn generate_user_message(
                 system_instruction: Some(Content {
                     role: "user".to_string(),
                     parts: vec![Part {
-                        text: Some(USER_MSG_SYSTEM_PROMPT.to_string()),
+                        text: Some(system_prompt.clone()),
                         thought: None,
                         inline_data: None,
                     }],
@@ -950,8 +958,8 @@ pub async fn generate_user_message(
                     thinking_config: None,
                     top_p: None,
                     top_k: None,
-                    response_mime_type: None,
-                    response_schema: None,
+                    response_mime_type: response_mime_type.clone(),
+                    response_schema: response_schema.clone(),
                 },
                 tools: None,
             };
@@ -971,9 +979,14 @@ pub async fn generate_user_message(
             let mut messages = messages_to_chat_messages(&context);
             messages.insert(0, mistral::ChatMessage {
                 role: "system".to_string(),
-                content: USER_MSG_SYSTEM_PROMPT.to_string(),
+                content: system_prompt.clone(),
                 tool_calls: None,
                 tool_call_id: None,
+            });
+
+            let response_format = response_schema.as_ref().map(|schema| mistral::ResponseFormat {
+                format_type: "json_object".to_string(),
+                schema: Some(schema.clone()),
             });
 
             let request = mistral::ChatRequest {
@@ -987,7 +1000,7 @@ pub async fn generate_user_message(
                 presence_penalty: None,
                 stop: None,
                 random_seed: None,
-                response_format: None,
+                response_format,
                 reasoning_effort: None,
                 tools: None,
                 tool_choice: None,

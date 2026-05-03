@@ -65,12 +65,20 @@ pub fn load_settings(data_dir: &Path) -> Result<Value, String> {
 }
 
 const HYPA_FILE: &str = "hypa.json";
+const HYPA_TMP_FILE: &str = "hypa.json.tmp";
 
+/// Atomic write: serialize to a sibling .tmp file then rename onto the target.
+/// POSIX rename is atomic within a single filesystem, so a concurrent reader
+/// observes either the previous full file or the new full file — never a
+/// partial write. Combined with the HypaState mutex guarding load-mutate-save,
+/// this prevents lost updates and torn reads.
 pub fn save_hypa(data_dir: &Path, summaries: &Value) -> Result<(), String> {
     fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(summaries).map_err(|e| e.to_string())?;
-    let path = data_dir.join(HYPA_FILE);
-    fs::write(&path, json.as_bytes()).map_err(|e| e.to_string())?;
+    let tmp_path = data_dir.join(HYPA_TMP_FILE);
+    let final_path = data_dir.join(HYPA_FILE);
+    fs::write(&tmp_path, json.as_bytes()).map_err(|e| e.to_string())?;
+    fs::rename(&tmp_path, &final_path).map_err(|e| e.to_string())?;
     Ok(())
 }
 

@@ -379,7 +379,10 @@
     <!-- Assets Tab -->
     {#if subTab === "assets"}
       {@const additionalAssets = data?.extensions?.risuai?.additionalAssets || data?.additionalAssets || []}
-      {@const assetNameMap = Object.fromEntries(additionalAssets.map(a => [a[0], a[1]]))}
+      {@const assetNameMap = Object.fromEntries(additionalAssets.map(a => {
+        const path = (a[1] || "").replace(/^__asset:/, "");
+        return [path, a[0]];
+      }))}
       <div class="card">
         <div class="card-header">
           <span class="card-title">Assets ({character.assetCount})</span>

@@ -94,7 +94,7 @@ pub fn build_auth_url(creds: &OAuthCredentials, pkce: Option<&PkceChallenge>) ->
     }
     let query: String = params
         .iter()
-        .map(|(k, v)| format!("{}={}", k, urlencoded(v)))
+        .map(|(k, v)| format!("{}={}", k, uri_encode(v)))
         .collect::<Vec<_>>()
         .join("&");
     format!("{}?{}", AUTH_ENDPOINT, query)
@@ -270,6 +270,17 @@ pub async fn list_gcp_projects(
     Ok(projects)
 }
 
+fn uri_encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                String::from(b as char)
+            }
+            _ => format!("%{:02X}", b),
+        })
+        .collect()
+}
+
 pub fn urlencoded(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
@@ -348,7 +359,12 @@ mod tests {
             redirect_uri: "http://localhost/cb".into(),
         };
         let url = build_auth_url(&creds, None);
-        assert!(url.contains("prompt=select_account+consent"));
-        assert!(!url.contains("%20"));
+        assert!(url.contains("prompt=select_account%20consent"));
+    }
+
+    #[test]
+    fn uri_encode_uses_percent() {
+        assert_eq!(uri_encode("select_account consent"), "select_account%20consent");
+        assert_eq!(uri_encode("a b"), "a%20b");
     }
 }

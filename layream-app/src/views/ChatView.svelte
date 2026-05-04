@@ -330,18 +330,16 @@
 </div>
 
 <style>
-  .chat-view {
-    display: flex;
-    flex-direction: column;
-    height: calc(100dvh - 64px - 48px - env(safe-area-inset-top) - var(--safe-bottom));
-  }
   .chat-messages {
-    flex: 1;
-    overflow-y: auto;
-    padding-bottom: 8px;
+    padding-bottom: 72px;
   }
   .chat-input-bar {
-    flex-shrink: 0;
-    z-index: 5;
+    position: fixed;
+    bottom: calc(64px + var(--safe-bottom));
+    left: 0;
+    right: 0;
+    z-index: 50;
+    background: var(--bg2);
+    border-top: 1px solid var(--bg4);
   }
 </style>

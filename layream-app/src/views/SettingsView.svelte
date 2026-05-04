@@ -137,14 +137,35 @@
     } catch (e) { vertexStatus = { connected: false, error: String(e) }; }
   }
 
+  let browserList = $state([]);
+  let browserPickerUrl = $state("");
+  let showBrowserPicker = $state(false);
+
   async function openExternal(url) {
     dbg(`openExternal: ${url?.slice(0, 80)}...`);
     try {
+      const result = await invoke("list_browsers");
+      const browsers = result?.browsers || [];
+      if (browsers.length > 1) {
+        browserList = browsers;
+        browserPickerUrl = url;
+        showBrowserPicker = true;
+      } else if (browsers.length === 1) {
+        await invoke("open_in_browser", { url, package: browsers[0].package });
+      } else {
         await invoke("open_url", { url });
-        dbg("opened via open_url command");
+      }
     } catch (e) {
-        dbg(`open_url failed: ${e}`);
+      dbg(`openExternal failed: ${e}, fallback to open_url`);
+      try { await invoke("open_url", { url }); } catch (_) {}
     }
+  }
+
+  async function pickBrowser(pkg) {
+    showBrowserPicker = false;
+    try {
+      await invoke("open_in_browser", { url: browserPickerUrl, package: pkg });
+    } catch (e) { dbg(`open_in_browser failed: ${e}`); }
   }
 
   async function startVertexAuth() {
@@ -725,4 +746,29 @@
       </p>
     </div>
   </div>
+
+  {#if showBrowserPicker}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 24px;" onclick={() => showBrowserPicker = false}>
+      <div style="background: var(--bg2); border-radius: var(--radius); width: 100%; max-width: 320px; overflow: hidden;" onclick={(e) => e.stopPropagation()}>
+        <div style="padding: 14px; border-bottom: 1px solid var(--bg4);">
+          <span style="font-size: 14px; font-weight: 600;">브라우저 선택</span>
+        </div>
+        <div style="max-height: 300px; overflow-y: auto;">
+          {#each browserList as b}
+            <button
+              style="width: 100%; padding: 14px; border: none; background: none; color: var(--fg); font-size: 14px; text-align: left; border-bottom: 1px solid var(--bg4); cursor: pointer;"
+              onclick={() => pickBrowser(b.package)}
+            >
+              {b.label}
+            </button>
+          {/each}
+        </div>
+        <button style="width: 100%; padding: 12px; border: none; background: var(--bg3); color: var(--fg3); font-size: 13px; cursor: pointer;" onclick={() => showBrowserPicker = false}>
+          취소
+        </button>
+      </div>
+    </div>
+  {/if}
 </div>

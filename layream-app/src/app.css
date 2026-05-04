@@ -600,3 +600,21 @@ button {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+.resize-handle {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 24px;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.resize-grip {
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg4);
+}

@@ -6,9 +6,12 @@
 
   let highlightHtml = $state("");
   let diagnostics = $state([]);
+  let editorHeight = $state(200);
   let textareaEl;
   let highlightEl;
   let debounceTimer;
+  let dragStartY = 0;
+  let dragStartH = 0;
 
   const KIND_CLASS = {
     control: "cbs-block",
@@ -62,12 +65,33 @@
     }
   }
 
+  function onDragStart(e) {
+    const touch = e.touches?.[0] || e;
+    dragStartY = touch.clientY;
+    dragStartH = editorHeight;
+    const onMove = (ev) => {
+      const t = ev.touches?.[0] || ev;
+      editorHeight = Math.max(80, dragStartH + (t.clientY - dragStartY));
+      ev.preventDefault();
+    };
+    const onEnd = () => {
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onEnd);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onEnd);
+    };
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", onEnd);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onEnd);
+  }
+
   onMount(() => {
     updateHighlight(value);
   });
 </script>
 
-<div class="editor-wrap">
+<div class="editor-wrap" style="height: {editorHeight}px;">
   <div class="editor-highlight" bind:this={highlightEl}>
     {@html highlightHtml}
   </div>
@@ -79,7 +103,16 @@
     onscroll={syncScroll}
     {readonly}
     spellcheck="false"
+    style="height: 100%; min-height: unset;"
   ></textarea>
+</div>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="resize-handle"
+  ontouchstart={onDragStart}
+  onmousedown={onDragStart}
+>
+  <span class="resize-grip"></span>
 </div>
 {#if diagnostics.length > 0}
   <div class="diagnostics">

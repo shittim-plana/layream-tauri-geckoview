@@ -3,7 +3,6 @@ package com.shittimplana.layream
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import app.tauri.annotation.Command
 import app.tauri.annotation.TauriPlugin
@@ -21,32 +20,27 @@ class BrowserPlugin(private val activity: Activity) : Plugin(activity) {
             val baseIntent = Intent(Intent.ACTION_VIEW, uri)
             baseIntent.addCategory(Intent.CATEGORY_BROWSABLE)
 
-            val browsers = activity.packageManager
-                .queryIntentActivities(baseIntent, PackageManager.MATCH_DEFAULT_ONLY)
+            val allApps = activity.packageManager
+                .queryIntentActivities(baseIntent, 0)
                 .filter { it.activityInfo.packageName != activity.packageName }
 
-            if (browsers.isEmpty()) {
+            if (allApps.isEmpty()) {
                 baseIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 activity.startActivity(baseIntent)
             } else {
-                val first = browsers[0]
-                val targetIntent = Intent(Intent.ACTION_VIEW, uri)
-                targetIntent.addCategory(Intent.CATEGORY_BROWSABLE)
-                targetIntent.component = ComponentName(
-                    first.activityInfo.packageName,
-                    first.activityInfo.name
-                )
-
-                val extraIntents = browsers.drop(1).map { ri ->
+                val targetIntents = allApps.map { ri ->
                     Intent(Intent.ACTION_VIEW, uri).apply {
                         addCategory(Intent.CATEGORY_BROWSABLE)
                         component = ComponentName(ri.activityInfo.packageName, ri.activityInfo.name)
                     }
-                }.toTypedArray()
+                }
 
-                val chooser = Intent.createChooser(targetIntent, "브라우저 선택")
-                if (extraIntents.isNotEmpty()) {
-                    chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, extraIntents)
+                val chooser = Intent.createChooser(targetIntents.first(), "브라우저 선택")
+                if (targetIntents.size > 1) {
+                    chooser.putExtra(
+                        Intent.EXTRA_INITIAL_INTENTS,
+                        targetIntents.drop(1).toTypedArray()
+                    )
                 }
                 chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 activity.startActivity(chooser)

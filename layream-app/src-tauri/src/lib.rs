@@ -58,6 +58,8 @@ pub fn run() {
             commands::gca_load_code_assist,
             commands::gca_check_opt_out,
             commands::open_url,
+            commands::list_browsers,
+            commands::open_in_browser,
             commands::start_streaming,
             commands::stop_streaming,
             commands::update_notification,

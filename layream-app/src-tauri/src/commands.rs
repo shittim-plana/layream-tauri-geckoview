@@ -887,6 +887,41 @@ pub async fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> 
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn list_browsers(app: tauri::AppHandle) -> Result<Value, String> {
+    #[cfg(target_os = "android")]
+    {
+        let handle = app.state::<crate::browser::BrowserHandle<tauri::Wry>>();
+        handle
+            .0
+            .run_mobile_plugin::<Value>("listBrowsers", ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(serde_json::json!({"browsers": []}))
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn open_in_browser(app: tauri::AppHandle, url: String, package: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        let handle = app.state::<crate::browser::BrowserHandle<tauri::Wry>>();
+        handle
+            .0
+            .run_mobile_plugin::<()>("openInBrowser", serde_json::json!({"url": url, "package": package}))
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        use tauri_plugin_shell::ShellExt;
+        #[allow(deprecated)]
+        app.shell().open(&url, None).map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn start_streaming(app: tauri::AppHandle, text: Option<String>) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {

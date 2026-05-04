@@ -335,7 +335,7 @@
   }
   .chat-input-bar {
     position: fixed;
-    bottom: calc(64px + var(--safe-bottom));
+    bottom: calc(56px + var(--safe-bottom));
     left: 0;
     right: 0;
     z-index: 50;

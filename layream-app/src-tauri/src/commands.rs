@@ -887,6 +887,20 @@ pub async fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> 
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn request_storage_permission(app: tauri::AppHandle) -> Result<Value, String> {
+    #[cfg(target_os = "android")]
+    {
+        let handle = app.state::<crate::browser::BrowserHandle<tauri::Wry>>();
+        handle.0.run_mobile_plugin::<Value>("requestStoragePermission", ()).map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(serde_json::json!({"granted": true}))
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn list_browsers(app: tauri::AppHandle) -> Result<Value, String> {
     #[cfg(target_os = "android")]
     {

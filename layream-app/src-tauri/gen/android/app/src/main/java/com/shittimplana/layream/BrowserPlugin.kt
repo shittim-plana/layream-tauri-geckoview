@@ -4,6 +4,9 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
 import app.tauri.annotation.Command
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
@@ -48,6 +51,24 @@ class BrowserPlugin(private val activity: Activity) : Plugin(activity) {
             val chooser = Intent.createChooser(intent, "브라우저 선택")
             activity.startActivity(chooser)
             invoke.resolve()
+        } catch (ex: Exception) {
+            invoke.reject(ex.message)
+        }
+    }
+
+    @Command
+    fun requestStoragePermission(invoke: Invoke) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                if (!Environment.isExternalStorageManager()) {
+                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                    intent.data = Uri.parse("package:${activity.packageName}")
+                    activity.startActivity(intent)
+                }
+            }
+            val result = JSObject()
+            result.put("granted", Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager())
+            invoke.resolve(result)
         } catch (ex: Exception) {
             invoke.reject(ex.message)
         }

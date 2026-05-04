@@ -229,8 +229,8 @@
           <button class="btn btn-sm btn-secondary" onclick={() => editingIndex = -1}>← Back</button>
           <span style="font-size: 12px; color: var(--fg3);">{editingIndex + 1}/{preset.promptTemplate.length}</span>
           <div style="display: flex; gap: 4px;">
-            <button class="btn btn-sm btn-secondary" disabled={editingIndex <= 0} onclick={() => editingIndex--}>Prev</button>
-            <button class="btn btn-sm btn-secondary" disabled={editingIndex >= preset.promptTemplate.length - 1} onclick={() => editingIndex++}>Next</button>
+            <button class="btn btn-sm btn-secondary" disabled={editingIndex <= 0} onclick={() => { editingIndex = editingIndex - 1; }}>Prev</button>
+            <button class="btn btn-sm btn-secondary" disabled={editingIndex >= preset.promptTemplate.length - 1} onclick={() => { editingIndex = editingIndex + 1; }}>Next</button>
           </div>
         </div>
 

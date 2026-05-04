@@ -148,13 +148,14 @@
         reader.readAsText(file);
       });
       const data = JSON.parse(text);
-      if (data?.summaries) {
-        hypaSummaries = data.summaries;
+      const items = data?.summaries ?? (Array.isArray(data) ? data : null);
+      if (items && Array.isArray(items)) {
+        hypaSummaries = items;
         hypaMemoryCount = hypaSummaries.length;
         await saveHypa();
         hypaImportStatus = `imported ${hypaSummaries.length} summaries`;
       } else {
-        hypaImportStatus = `no "summaries" key in JSON`;
+        hypaImportStatus = `invalid format — expected { summaries: [...] } or [...]`;
       }
     } catch (e) { hypaImportStatus = `import error: ${e}`; }
     setTimeout(() => { hypaImportStatus = ""; }, STATUS_CLEAR_MS);

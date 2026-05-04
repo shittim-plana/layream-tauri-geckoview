@@ -83,8 +83,11 @@
 </div>
 {#if diagnostics.length > 0}
   <div class="diagnostics">
-    {#each diagnostics as d}
+    {#each diagnostics.slice(0, 5) as d}
       <div>Line {d.line}: {d.message}</div>
     {/each}
+    {#if diagnostics.length > 5}
+      <div style="color: var(--fg3);">...and {diagnostics.length - 5} more</div>
+    {/if}
   </div>
 {/if}

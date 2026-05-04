@@ -330,14 +330,18 @@
 </div>
 
 <style>
+  .chat-view {
+    display: flex;
+    flex-direction: column;
+    height: calc(100dvh - 64px - 48px - env(safe-area-inset-top) - var(--safe-bottom));
+  }
   .chat-messages {
-    /* Bottom space so the final message is not hidden by the sticky input
-       bar. Sized to roughly match the input bar's content height. */
+    flex: 1;
+    overflow-y: auto;
     padding-bottom: 8px;
   }
   .chat-input-bar {
-    position: sticky;
-    bottom: 0;
+    flex-shrink: 0;
     z-index: 5;
   }
 </style>

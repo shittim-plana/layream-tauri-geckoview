@@ -142,26 +142,6 @@ fn settings_str_opt<'a>(settings: &'a Value, key: &str) -> Option<&'a str> {
     settings.get(key).and_then(|v| v.as_str())
 }
 
-/// Convert raw message Values (`{role, text}`) into Vertex/GCA `Content` array.
-/// Mirrors `commands.rs::messages_to_contents` shape.
-fn messages_to_contents(messages: &[Value]) -> Vec<Content> {
-    messages
-        .iter()
-        .filter_map(|m| {
-            let role = m.get("role")?.as_str()?;
-            let text = m.get("text")?.as_str()?;
-            Some(Content {
-                role: role.to_string(),
-                parts: vec![Part {
-                    text: Some(text.to_string()),
-                    thought: None,
-                    inline_data: None,
-                }],
-            })
-        })
-        .collect()
-}
-
 /// Refresh a token if expired, persist if rotated. Returns the valid token.
 async fn refresh_token(
     client: &reqwest::Client,

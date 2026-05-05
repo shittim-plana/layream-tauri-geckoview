@@ -23,6 +23,7 @@ pub fn run() {
         .manage(commands::AuthState::default())
         .manage(commands::RequestLogState::default())
         .manage(commands::CharacterAssetsState::default())
+        .manage(commands::StreamCancelState::default())
         .manage(commands_hypa::HypaState::default())
         .setup(|app| {
             let auth_state = app.state::<commands::AuthState>();
@@ -58,9 +59,13 @@ pub fn run() {
             commands::gca_load_code_assist,
             commands::gca_check_opt_out,
             commands::open_url,
+            commands::open_custom_tab,
             commands::request_storage_permission,
+            commands::request_notification_permission,
+            commands::get_pending_oauth,
             commands::list_browsers,
             commands::open_in_browser,
+            commands::cancel_chat,
             commands::start_streaming,
             commands::stop_streaming,
             commands::update_notification,

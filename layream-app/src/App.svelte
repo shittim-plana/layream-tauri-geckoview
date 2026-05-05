@@ -21,7 +21,53 @@
   let activeTab = $state("preset");
   let oauthMessage = $state("");
 
+  async function requestPermissions() {
+    try { await invoke("request_storage_permission"); } catch (_) {}
+    try { await invoke("request_notification_permission"); } catch (_) {}
+  }
+
+  async function checkPendingOAuth() {
+    try {
+      const result = await invoke("get_pending_oauth");
+      if (result?.scheme && result?.code) {
+        await processOAuthCode(result.scheme, result.code);
+      }
+    } catch (_) {}
+  }
+
+  async function processOAuthCode(scheme, code) {
+    activeTab = "settings";
+    oauthMessage = "Exchanging token...";
+    try {
+      let result;
+      if (scheme.startsWith(VERTEX_SCHEME_PREFIX)) {
+        result = await invoke("vertex_oauth_callback", { code });
+        window.dispatchEvent(new CustomEvent("oauth-complete", { detail: "vertex" }));
+      } else if (scheme.startsWith(GCA_SCHEME_PREFIX)) {
+        result = await invoke("gca_oauth_callback", { code });
+        window.dispatchEvent(new CustomEvent("oauth-complete", { detail: "gca" }));
+      } else {
+        oauthMessage = "Unknown OAuth scheme";
+        setTimeout(() => { oauthMessage = ""; }, 3000);
+        return;
+      }
+      oauthMessage = result || "Connected!";
+    } catch (e) {
+      oauthMessage = `OAuth failed: ${e}`;
+    }
+    setTimeout(() => { oauthMessage = ""; }, 5000);
+  }
+
   onMount(async () => {
+    requestPermissions();
+    checkPendingOAuth();
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") checkPendingOAuth();
+    });
+
+    window.__oauthCallback = (scheme, code) => processOAuthCode(scheme, code);
+
     try {
       const { onOpenUrl } = await import("@tauri-apps/plugin-deep-link");
       await onOpenUrl(async (urls) => {
@@ -60,31 +106,29 @@
     }
   });
 
+  const VERTEX_SCHEME_PREFIX = "com.googleusercontent.apps.317210024447";
+  const GCA_SCHEME_PREFIX = "com.googleusercontent.apps.681255809395";
+
   async function handleOAuthCallback(url) {
     try {
-      const parsed = new URL(url);
-      const code = parsed.searchParams.get("code");
+      const code = extractCodeFromUrl(url);
       if (!code) return;
-
-      activeTab = "settings";
-      oauthMessage = "Exchanging token...";
-
-      try {
-        const result = await invoke("vertex_oauth_callback", { code });
-        oauthMessage = result;
-      } catch {
-        try {
-          const result = await invoke("gca_oauth_callback", { code });
-          oauthMessage = result;
-        } catch (e) {
-          oauthMessage = `OAuth failed: ${e}`;
-        }
-      }
-
-      setTimeout(() => { oauthMessage = ""; }, 3000);
+      const scheme = url.split(":")[0] || "";
+      await processOAuthCode(scheme, code);
     } catch (e) {
       console.error("OAuth callback error:", e);
     }
+  }
+
+  function extractCodeFromUrl(url) {
+    // Deep link URLs with custom schemes (e.g. com.googleusercontent.apps.xxx:/oauth2callback?code=...)
+    // may not parse correctly with new URL() because the scheme contains dots.
+    // Extract the code parameter manually from the query string.
+    const queryStart = url.indexOf("?");
+    if (queryStart === -1) return null;
+    const query = url.substring(queryStart + 1);
+    const params = new URLSearchParams(query);
+    return params.get("code");
   }
 
   const tabs = [

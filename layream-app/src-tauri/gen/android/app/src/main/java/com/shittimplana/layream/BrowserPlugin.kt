@@ -1,5 +1,6 @@
 package com.shittimplana.layream
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -7,11 +8,14 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import app.tauri.annotation.Command
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
+import androidx.browser.customtabs.CustomTabsIntent
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -48,6 +52,7 @@ class BrowserPlugin(private val activity: Activity) : Plugin(activity) {
             val url = invoke.parseArgs(String::class.java)
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
             intent.addCategory(Intent.CATEGORY_BROWSABLE)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             val chooser = Intent.createChooser(intent, "브라우저 선택")
             activity.startActivity(chooser)
             invoke.resolve()
@@ -77,18 +82,84 @@ class BrowserPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun openInBrowser(invoke: Invoke) {
         try {
-            val args = invoke.parseArgs(JSObject::class.java)
-            val url = args.getString("url")
-            val pkg = args.getString("package")
+            val combined = invoke.parseArgs(String::class.java)
+            val sep = combined.indexOf("|")
+            val url: String
+            val pkg: String
+            if (sep >= 0) {
+                pkg = combined.substring(0, sep)
+                url = combined.substring(sep + 1)
+            } else {
+                url = combined
+                pkg = ""
+            }
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
             intent.addCategory(Intent.CATEGORY_BROWSABLE)
-            if (pkg != null && pkg.isNotEmpty()) {
+            if (pkg.isNotEmpty()) {
                 intent.setPackage(pkg)
             }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             activity.startActivity(intent)
             invoke.resolve()
         } catch (ex: Exception) {
             invoke.reject(ex.message)
+        }
+    }
+
+    @Command
+    fun openCustomTab(invoke: Invoke) {
+        try {
+            val url = invoke.parseArgs(String::class.java)
+            val customTabsIntent = CustomTabsIntent.Builder()
+                .build()
+            customTabsIntent.launchUrl(activity, Uri.parse(url))
+            invoke.resolve()
+        } catch (ex: Exception) {
+            invoke.reject(ex.message)
+        }
+    }
+
+    @Command
+    fun requestNotificationPermission(invoke: Invoke) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                    ActivityCompat.requestPermissions(
+                        activity,
+                        arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                        2001
+                    )
+                }
+            }
+            val result = JSObject()
+            result.put("granted", Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED)
+            invoke.resolve(result)
+        } catch (ex: Exception) {
+            invoke.reject(ex.message)
+        }
+    }
+
+    @Command
+    fun getPendingOAuth(invoke: Invoke) {
+        try {
+            val file = activity.filesDir.resolve("pending_oauth.txt")
+            if (file.exists()) {
+                val content = file.readText()
+                file.delete()
+                val sep = content.indexOf("|")
+                if (sep >= 0) {
+                    val result = JSObject()
+                    result.put("scheme", content.substring(0, sep))
+                    result.put("code", content.substring(sep + 1))
+                    invoke.resolve(result)
+                    return
+                }
+            }
+            invoke.resolve(JSObject())
+        } catch (ex: Exception) {
+            invoke.resolve(JSObject())
         }
     }
 }

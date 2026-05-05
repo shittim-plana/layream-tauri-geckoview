@@ -11,6 +11,19 @@ pub enum CardData {
     OldTavern(OldTavernChar),
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AssetInfo {
+    pub name: String,
+    pub size: u64,
+}
+
+#[derive(Debug)]
+pub struct CharacterMetadata {
+    pub card: Option<CardData>,
+    pub asset_list: Vec<AssetInfo>,
+    pub module_data: Option<Vec<u8>>,
+}
+
 #[derive(Debug)]
 pub struct CharacterData {
     pub card: Option<CardData>,
@@ -69,6 +82,80 @@ fn read_charx(data: &[u8]) -> Result<CharacterData, LayreamError> {
         assets,
         module_data,
     })
+}
+
+pub fn read_charx_metadata(data: &[u8]) -> Result<CharacterMetadata, LayreamError> {
+    let cursor = std::io::Cursor::new(data);
+    let mut archive = zip::ZipArchive::new(cursor)
+        .map_err(|e| LayreamError::Http(format!("ZIP error: {}", e)))?;
+
+    let mut card_json: Option<String> = None;
+    let mut module_data: Option<Vec<u8>> = None;
+    let mut asset_list: Vec<AssetInfo> = Vec::new();
+
+    for i in 0..archive.len() {
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| LayreamError::Http(format!("ZIP entry error: {}", e)))?;
+
+        let name = file.name().to_string();
+
+        if name == "card.json" {
+            let mut buf = Vec::new();
+            file.read_to_end(&mut buf)
+                .map_err(|e| LayreamError::Http(format!("ZIP read error: {}", e)))?;
+            card_json = Some(String::from_utf8_lossy(&buf).into_owned());
+        } else if name == "module.risum" {
+            let mut buf = Vec::new();
+            file.read_to_end(&mut buf)
+                .map_err(|e| LayreamError::Http(format!("ZIP read error: {}", e)))?;
+            module_data = Some(buf);
+        } else if !name.ends_with(".json") && !name.ends_with('/') {
+            asset_list.push(AssetInfo {
+                name,
+                size: file.size(),
+            });
+        }
+    }
+
+    let card = card_json.and_then(|json| parse_card_json(&json));
+
+    Ok(CharacterMetadata {
+        card,
+        asset_list,
+        module_data,
+    })
+}
+
+pub fn read_charx_asset(data: &[u8], asset_name: &str) -> Result<Vec<u8>, LayreamError> {
+    let cursor = std::io::Cursor::new(data);
+    let mut archive = zip::ZipArchive::new(cursor)
+        .map_err(|e| LayreamError::Http(format!("ZIP error: {}", e)))?;
+
+    let mut file = archive
+        .by_name(asset_name)
+        .map_err(|e| LayreamError::Http(format!("Asset '{}' not found: {}", asset_name, e)))?;
+
+    let mut buf = Vec::with_capacity(file.size() as usize);
+    file.read_to_end(&mut buf)
+        .map_err(|e| LayreamError::Http(format!("ZIP read error: {}", e)))?;
+    Ok(buf)
+}
+
+pub fn read_charx_asset_from_file(path: &std::path::Path, asset_name: &str) -> Result<Vec<u8>, LayreamError> {
+    let file = std::fs::File::open(path)
+        .map_err(|e| LayreamError::Http(format!("Open charx file: {}", e)))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|e| LayreamError::Http(format!("ZIP error: {}", e)))?;
+
+    let mut entry = archive
+        .by_name(asset_name)
+        .map_err(|e| LayreamError::Http(format!("Asset '{}' not found: {}", asset_name, e)))?;
+
+    let mut buf = Vec::with_capacity(entry.size() as usize);
+    entry.read_to_end(&mut buf)
+        .map_err(|e| LayreamError::Http(format!("ZIP read error: {}", e)))?;
+    Ok(buf)
 }
 
 fn read_png(data: &[u8]) -> Result<CharacterData, LayreamError> {

@@ -2,8 +2,9 @@
   import { invoke } from "../lib/tauri.js";
   import { onMount } from "svelte";
 
-  let debugLog = $state("");
-  function dbg(msg) { debugLog = msg; }
+  let debugLines = $state([]);
+  let debugLog = $derived(debugLines.join("\n"));
+  function dbg(msg) { debugLines = [...debugLines.slice(-9), msg]; }
 
   // --- User Persona ---
   // userName is referenced as {{user}} in CBS templates and used as a fallback
@@ -87,12 +88,13 @@
   ];
 
   const VERTEX_DEFAULT_MODELS = [
+    "gemini-3.1-pro-preview",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3-pro-preview",
+    "gemini-3-flash-preview",
     "gemini-2.5-pro",
     "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-1.5-pro",
-    "gemini-1.5-flash",
+    "gemini-2.5-flash-lite",
   ];
 
   const VERTEX_EMBEDDING_MODELS = [
@@ -141,11 +143,12 @@
   let browserPickerUrl = $state("");
   let showBrowserPicker = $state(false);
 
-  async function openExternal(url) {
-    dbg(`openExternal: ${url?.slice(0, 80)}...`);
+  async function openWithBrowserPicker(url) {
+    dbg(`openWithBrowserPicker: ${url?.slice(0, 80)}...`);
     try {
       const result = await invoke("list_browsers");
       const browsers = result?.browsers || [];
+      dbg(`browsers: ${browsers.length} found`);
       if (browsers.length > 1) {
         browserList = browsers;
         browserPickerUrl = url;
@@ -153,16 +156,17 @@
       } else if (browsers.length === 1) {
         await invoke("open_in_browser", { url, package: browsers[0].package });
       } else {
-        await invoke("open_url", { url });
+        await invoke("open_custom_tab", { url });
       }
     } catch (e) {
-      dbg(`openExternal failed: ${e}, fallback to open_url`);
-      try { await invoke("open_url", { url }); } catch (_) {}
+      dbg(`openWithBrowserPicker failed: ${e}`);
+      try { await invoke("open_custom_tab", { url }); } catch (_) {}
     }
   }
 
   async function pickBrowser(pkg) {
     showBrowserPicker = false;
+    dbg(`pickBrowser: ${pkg}`);
     try {
       await invoke("open_in_browser", { url: browserPickerUrl, package: pkg });
     } catch (e) { dbg(`open_in_browser failed: ${e}`); }
@@ -173,9 +177,28 @@
     try {
       const url = await invoke("vertex_oauth_start");
       dbg(`got url type=${typeof url}, val=${String(url)?.slice(0, 100)}`);
-      if (url) await openExternal(url);
-      else dbg("url is falsy!");
+      if (url) {
+        await openWithBrowserPicker(url);
+      } else {
+        dbg("url is falsy!");
+      }
     } catch (e) { dbg(`Vertex auth CATCH: ${e}`); }
+  }
+
+  // Listen for auth completion events emitted by App.svelte deep link handler
+  async function listenAuthEvents() {
+    window.addEventListener("oauth-complete", (e) => {
+      dbg(`OAuth complete: ${e.detail}`);
+      if (e.detail === "vertex") checkVertexStatus();
+      if (e.detail === "gca") { checkGcaStatus(); loadGcaProfile(); }
+    });
+    try {
+      const { listen } = await import("@tauri-apps/api/event");
+      await listen("gca-auth-complete", (event) => {
+        dbg(`GCA loopback result: ${event.payload}`);
+        if (event.payload === "ok") { checkGcaStatus(); loadGcaProfile(); }
+      });
+    } catch (e) { dbg(`event listen failed: ${e}`); }
   }
 
   async function disconnectVertex() {
@@ -185,10 +208,19 @@
 
   async function fetchVertexModels() {
     vertexFetching = true;
+    dbg(`Fetching models for region: ${vertexRegion}...`);
     try {
       const result = await invoke("vertex_list_models", { region: vertexRegion });
-      if (result?.length) vertexFetchedModels = result;
-    } catch (e) { console.warn("Failed to fetch Vertex models:", e); }
+      dbg(`Fetch result: ${JSON.stringify(result)?.slice(0, 200)}`);
+      if (Array.isArray(result) && result.length) {
+        vertexFetchedModels = result;
+        dbg(`Fetched ${result.length} models`);
+      } else {
+        dbg(`No models returned`);
+      }
+    } catch (e) {
+      dbg(`Fetch models failed: ${e}`);
+    }
     vertexFetching = false;
   }
 
@@ -204,18 +236,7 @@
       const url = await invoke("gca_oauth_start");
       dbg(`got url: ${url?.slice(0, 80)}...`);
       if (url) {
-        await openExternal(url);
-        try {
-          const { listen } = await import("@tauri-apps/api/event");
-          const unlisten = await listen("gca-auth-complete", (event) => {
-            dbg(`GCA auth result: ${event.payload}`);
-            if (event.payload === "ok") {
-              checkGcaStatus();
-              loadGcaProfile();
-            }
-            unlisten();
-          });
-        } catch (e) { dbg(`event listen failed: ${e}`); }
+        await openWithBrowserPicker(url);
       }
     } catch (e) { dbg(`GCA auth error: ${e}`); }
   }
@@ -270,12 +291,38 @@
     } catch (e) { console.error("Settings import failed:", e); }
   }
 
+  /** ID substrings that indicate non-chat models. */
+  const MISTRAL_EXCLUDE_PATTERNS = ["embed", "moderation", "classifier"];
+
+  function isMistralChatModel(model) {
+    // If capabilities field is present, use it for accurate filtering
+    if (model.capabilities && typeof model.capabilities === "object") {
+      return model.capabilities.completion_chat === true;
+    }
+    // Fallback: exclude by ID pattern
+    const idLower = model.id.toLowerCase();
+    return !MISTRAL_EXCLUDE_PATTERNS.some(pat => idLower.includes(pat));
+  }
+
   async function fetchMistralModels() {
     if (!mistralKey) return;
     mistralFetching = true;
     try {
       const result = await invoke("mistral_list_models", { api_key: mistralKey });
-      if (result?.length) mistralModels = result.map(m => m.id).sort();
+      if (result?.length) {
+        const chatModels = result.filter(isMistralChatModel);
+        // Deduplicate by id, then sort: "latest" suffix first, then by created desc, then alphabetically
+        const unique = [...new Map(chatModels.map(m => [m.id, m])).values()];
+        unique.sort((a, b) => {
+          const aLatest = a.id.endsWith("-latest");
+          const bLatest = b.id.endsWith("-latest");
+          if (aLatest !== bLatest) return aLatest ? -1 : 1;
+          // Prefer newer models (higher created timestamp)
+          if (a.created && b.created && a.created !== b.created) return b.created - a.created;
+          return a.id.localeCompare(b.id);
+        });
+        mistralModels = unique.map(m => m.id);
+      }
     } catch (e) { console.warn("Failed to fetch Mistral models:", e); }
     mistralFetching = false;
   }
@@ -344,6 +391,7 @@
     if (gcaStatus?.connected && !gcaStatus?.expired) {
       loadGcaProfile();
     }
+    listenAuthEvents();
   });
 
   function statusText(status) {
@@ -732,7 +780,7 @@
   <div class="card" style="border-color: var(--orange);">
     <div class="card-header"><span class="card-title" style="color: var(--orange);">Debug</span></div>
     <div class="card-body">
-      <p style="font-size: 11px; color: var(--orange); word-break: break-all;">{debugLog}</p>
+      <p style="font-size: 11px; color: var(--orange); word-break: break-all; white-space: pre-wrap;">{debugLog}</p>
     </div>
   </div>
   {/if}
@@ -750,12 +798,16 @@
   {#if showBrowserPicker}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 24px;" onclick={() => showBrowserPicker = false}>
+    <div
+      style="position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 24px;"
+      onclick={() => showBrowserPicker = false}
+      ontouchmove={(e) => e.preventDefault()}
+    >
       <div style="background: var(--bg2); border-radius: var(--radius); width: 100%; max-width: 320px; overflow: hidden;" onclick={(e) => e.stopPropagation()}>
         <div style="padding: 14px; border-bottom: 1px solid var(--bg4);">
           <span style="font-size: 14px; font-weight: 600;">브라우저 선택</span>
         </div>
-        <div style="max-height: 300px; overflow-y: auto;">
+        <div style="max-height: 300px; overflow-y: auto; overscroll-behavior: contain;">
           {#each browserList as b}
             <button
               style="width: 100%; padding: 14px; border: none; background: none; color: var(--fg); font-size: 14px; text-align: left; border-bottom: 1px solid var(--bg4); cursor: pointer;"

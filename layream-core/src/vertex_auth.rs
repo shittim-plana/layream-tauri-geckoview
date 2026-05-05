@@ -13,7 +13,7 @@ const SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform https://www.
 const REFRESH_MARGIN: Duration = Duration::from_secs(300);
 
 pub const VERTEX_CLIENT_ID: &str = "317210024447-v4g6e0e1q5933vogajp0651vhkrgal06.apps.googleusercontent.com";
-pub const LAYREAM_REDIRECT_URI: &str = "com.shittimplana.layream://oauth/callback";
+pub const LAYREAM_REDIRECT_URI: &str = "com.googleusercontent.apps.317210024447-v4g6e0e1q5933vogajp0651vhkrgal06:/oauth2callback";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthCredentials {
@@ -124,7 +124,7 @@ pub async fn exchange_code(
         .form(&params)
         .send()
         .await
-        .map_err(|e| LayreamError::Http(e.to_string()))?;
+        .map_err(|e| LayreamError::Http(format!("token exchange: {e:#}")))?;
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
@@ -158,7 +158,7 @@ pub async fn refresh_token(
         .form(&params)
         .send()
         .await
-        .map_err(|e| LayreamError::Http(e.to_string()))?;
+        .map_err(|e| LayreamError::Http(format!("token refresh: {e:#}")))?;
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
@@ -270,7 +270,7 @@ pub async fn list_gcp_projects(
     Ok(projects)
 }
 
-fn uri_encode(s: &str) -> String {
+pub fn uri_encode(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {

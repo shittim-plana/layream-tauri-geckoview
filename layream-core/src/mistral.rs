@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::LayreamError;
+use crate::retry::{self, CancelToken};
 
 const API_BASE: &str = "https://api.mistral.ai/v1";
 
@@ -151,19 +152,21 @@ pub async fn chat_stream(
     api_key: &str,
     request: &ChatRequest,
     on_chunk: impl Fn(&str),
+    cancel: Option<CancelToken>,
 ) -> Result<String, LayreamError> {
     let url = format!("{}/chat/completions", API_BASE);
+    let auth = format!("Bearer {}", api_key);
 
     let mut stream_req = request.clone();
     stream_req.stream = Some(true);
 
-    let resp = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .json(&stream_req)
-        .send()
-        .await
-        .map_err(|e| LayreamError::Http(e.to_string()))?;
+    let resp = retry::retry_request(&cancel, || {
+        let req = client
+            .post(&url)
+            .header("Authorization", &auth)
+            .json(&stream_req);
+        async { req.send().await.map_err(|e| LayreamError::Http(e.to_string())) }
+    }).await?;
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
@@ -176,6 +179,9 @@ pub async fn chat_stream(
     let mut buffer = String::new();
 
     while let Some(chunk) = stream.next().await {
+        if retry::is_cancelled(&cancel) {
+            return Err(LayreamError::Http("cancelled".to_string()));
+        }
         let bytes = chunk.map_err(|e| LayreamError::Http(e.to_string()))?;
         buffer.push_str(&String::from_utf8_lossy(&bytes));
 
@@ -210,19 +216,12 @@ pub async fn list_models(
     api_key: &str,
 ) -> Result<Vec<ModelInfo>, LayreamError> {
     let url = format!("{}/models", API_BASE);
+    let auth = format!("Bearer {}", api_key);
 
-    let resp = client
-        .get(&url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .send()
-        .await
-        .map_err(|e| LayreamError::Http(e.to_string()))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status().as_u16();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(LayreamError::ApiError { status, body });
-    }
+    let resp = retry::retry_request(&None, || {
+        let req = client.get(&url).header("Authorization", &auth);
+        async { req.send().await.map_err(|e| LayreamError::Http(e.to_string())) }
+    }).await?;
 
     let list: ModelListResponse = resp
         .json()
@@ -238,6 +237,13 @@ pub struct ModelInfo {
     pub object: Option<String>,
     pub created: Option<u64>,
     pub owned_by: Option<String>,
+    /// Model capabilities (e.g. {"completion_chat": true, "completion_fim": false, ...}).
+    /// Present in Mistral API responses; None if the field is absent.
+    #[serde(default)]
+    pub capabilities: Option<Value>,
+    /// Model type string (e.g. "base", "fine-tuned").
+    #[serde(default, rename = "type")]
+    pub model_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

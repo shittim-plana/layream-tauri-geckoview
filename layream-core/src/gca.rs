@@ -2,6 +2,7 @@ use futures::StreamExt;
 use serde_json::Value;
 
 use crate::error::LayreamError;
+use crate::retry::{self, CancelToken};
 use crate::vertex_api::{GenerateRequest, StreamChunk};
 
 const GCA_BASE: &str = "https://cloudcode-pa.googleapis.com/v1internal";
@@ -32,17 +33,19 @@ pub async fn stream_generate(
     model: &str,
     request: &GenerateRequest,
     on_chunk: impl Fn(&str),
+    cancel: Option<CancelToken>,
 ) -> Result<String, LayreamError> {
     let url = build_endpoint(model);
+    let auth = format!("Bearer {}", access_token);
 
-    let resp = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", access_token))
-        .header("x-goog-api-client", "google-cloud-intellij")
-        .json(request)
-        .send()
-        .await
-        .map_err(|e| LayreamError::Http(e.to_string()))?;
+    let resp = retry::retry_request(&cancel, || {
+        let req = client
+            .post(&url)
+            .header("Authorization", &auth)
+            .header("x-goog-api-client", "google-cloud-intellij")
+            .json(request);
+        async { req.send().await.map_err(|e| LayreamError::Http(e.to_string())) }
+    }).await?;
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
@@ -55,6 +58,9 @@ pub async fn stream_generate(
     let mut buffer = String::new();
 
     while let Some(chunk) = stream.next().await {
+        if retry::is_cancelled(&cancel) {
+            return Err(LayreamError::Http("cancelled".to_string()));
+        }
         let bytes = chunk.map_err(|e| LayreamError::Http(e.to_string()))?;
         buffer.push_str(&String::from_utf8_lossy(&bytes));
 

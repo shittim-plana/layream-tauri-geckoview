@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::LayreamError;
+use crate::retry::{self, CancelToken};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct GenerateRequest {
@@ -133,16 +134,18 @@ pub async fn stream_generate(
     model: &str,
     request: &GenerateRequest,
     on_chunk: impl Fn(&str),
+    cancel: Option<CancelToken>,
 ) -> Result<String, LayreamError> {
     let url = build_endpoint(project_id, region, model);
+    let auth = format!("Bearer {}", access_token);
 
-    let resp = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", access_token))
-        .json(request)
-        .send()
-        .await
-        .map_err(|e| LayreamError::Http(e.to_string()))?;
+    let resp = retry::retry_request(&cancel, || {
+        let req = client
+            .post(&url)
+            .header("Authorization", &auth)
+            .json(request);
+        async { req.send().await.map_err(|e| LayreamError::Http(e.to_string())) }
+    }).await?;
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
@@ -155,6 +158,9 @@ pub async fn stream_generate(
     let mut buffer = String::new();
 
     while let Some(chunk) = stream.next().await {
+        if retry::is_cancelled(&cancel) {
+            return Err(LayreamError::Http("cancelled".to_string()));
+        }
         let bytes = chunk.map_err(|e| LayreamError::Http(e.to_string()))?;
         buffer.push_str(&String::from_utf8_lossy(&bytes));
 
@@ -262,19 +268,12 @@ pub async fn list_models(
         format!("{}-aiplatform.googleapis.com", region)
     };
     let url = format!("https://{}/v1/publishers/google/models", host);
+    let auth = format!("Bearer {}", access_token);
 
-    let resp = client
-        .get(&url)
-        .header("Authorization", format!("Bearer {}", access_token))
-        .send()
-        .await
-        .map_err(|e| LayreamError::Http(e.to_string()))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status().as_u16();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(LayreamError::ApiError { status, body });
-    }
+    let resp = retry::retry_request(&None, || {
+        let req = client.get(&url).header("Authorization", &auth);
+        async { req.send().await.map_err(|e| LayreamError::Http(e.to_string())) }
+    }).await?;
 
     let body: Value = resp
         .json()
@@ -282,13 +281,17 @@ pub async fn list_models(
         .map_err(|e| LayreamError::Http(e.to_string()))?;
 
     let mut models = Vec::new();
-    if let Some(arr) = body.get("models").and_then(|m| m.as_array()) {
+    if let Some(arr) = body.get("publisherModels").and_then(|m| m.as_array()) {
         for entry in arr {
             if let Some(name) = entry.get("name").and_then(|n| n.as_str()) {
                 let model_id = name.strip_prefix("publishers/google/models/").unwrap_or(name);
                 models.push(model_id.to_string());
             }
         }
+    }
+    if models.is_empty() {
+        eprintln!("[layream] list_models: no models found in response. Keys: {:?}",
+            body.as_object().map(|o| o.keys().collect::<Vec<_>>()));
     }
     models.sort();
     Ok(models)

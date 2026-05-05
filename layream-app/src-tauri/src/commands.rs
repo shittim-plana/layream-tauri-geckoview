@@ -13,6 +13,9 @@ use layream_core::vertex_auth::{
     self, OAuthCredentials, PkceChallenge, Tokens, VERTEX_CLIENT_ID, LAYREAM_REDIRECT_URI,
 };
 use layream_core::gca::{GCA_OAUTH_CLIENT_ID, GCA_OAUTH_CLIENT_SECRET, GCA_OAUTH_SCOPE};
+use layream_core::retry;
+
+const GCA_REDIRECT_URI: &str = "com.googleusercontent.apps.681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j:/oauth2callback";
 use layream_core::voyage;
 use serde_json::Value;
 use std::sync::Mutex;
@@ -24,26 +27,30 @@ use crate::persistence;
 
 pub struct CharacterAssetsState {
     pub assets: Mutex<HashMap<String, Vec<u8>>>,
+    pub charx_path: Mutex<Option<std::path::PathBuf>>,
 }
 
 impl Default for CharacterAssetsState {
     fn default() -> Self {
-        Self { assets: Mutex::new(HashMap::new()) }
+        Self {
+            assets: Mutex::new(HashMap::new()),
+            charx_path: Mutex::new(None),
+        }
     }
 }
 
 pub struct AuthState {
-    pub vertex_pkce: Mutex<Option<PkceChallenge>>,
     pub vertex_tokens: Mutex<Option<Tokens>>,
     pub gca_tokens: Mutex<Option<Tokens>>,
+    pub vertex_pkce: Mutex<Option<PkceChallenge>>,
 }
 
 impl Default for AuthState {
     fn default() -> Self {
         Self {
-            vertex_pkce: Mutex::new(None),
             vertex_tokens: Mutex::new(None),
             gca_tokens: Mutex::new(None),
+            vertex_pkce: Mutex::new(None),
         }
     }
 }
@@ -64,6 +71,23 @@ impl AuthState {
                 *self.gca_tokens.lock().unwrap() = gca;
             }
         }
+    }
+}
+
+pub struct StreamCancelState {
+    pub token: Mutex<Option<retry::CancelToken>>,
+}
+
+impl Default for StreamCancelState {
+    fn default() -> Self {
+        Self { token: Mutex::new(None) }
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn cancel_chat(state: State<'_, StreamCancelState>) {
+    if let Some(token) = state.token.lock().unwrap().as_ref() {
+        token.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -96,34 +120,70 @@ pub async fn load_character(
     name: String,
     data: Vec<u8>,
     asset_state: State<'_, CharacterAssetsState>,
+    app: tauri::AppHandle,
 ) -> Result<Value, String> {
-    let result = tokio::task::spawn_blocking(move || -> Result<_, String> {
-        let ch = charx::read_character(&name, &data).map_err(|e| e.to_string())?;
-        let card_json = match &ch.card {
-            Some(charx::CardData::V2(card)) => serde_json::to_value(card).ok(),
-            Some(charx::CardData::OldTavern(card)) => serde_json::to_value(card).ok(),
-            None => None,
-        };
-        let asset_list: Vec<Value> = ch.assets.iter().map(|(name, data)| {
-            serde_json::json!({
-                "name": name,
-                "size": data.len(),
-            })
-        }).collect();
-        let json = serde_json::json!({
-            "card": card_json,
-            "assetCount": ch.assets.len(),
-            "assetList": asset_list,
-            "hasModule": ch.module_data.is_some(),
-        });
-        Ok((json, ch.assets))
-    })
-    .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
+    let is_charx = {
+        let lower = name.to_lowercase();
+        lower.ends_with(".charx") || lower.ends_with(".jpeg")
+    };
 
-    *asset_state.assets.lock().unwrap() = result.1;
-    Ok(result.0)
+    if is_charx {
+        let data_dir = persistence::get_data_dir(&app)?;
+        let charx_store = data_dir.join("charx_cache.bin");
+        let data_clone = data.clone();
+        let store_path = charx_store.clone();
+
+        let result = tokio::task::spawn_blocking(move || -> Result<_, String> {
+            std::fs::write(&store_path, &data_clone)
+                .map_err(|e| format!("Save charx cache: {}", e))?;
+            let meta = charx::read_charx_metadata(&data_clone).map_err(|e| e.to_string())?;
+            let card_json = match &meta.card {
+                Some(charx::CardData::V2(card)) => serde_json::to_value(card).ok(),
+                Some(charx::CardData::OldTavern(card)) => serde_json::to_value(card).ok(),
+                None => None,
+            };
+            let json = serde_json::json!({
+                "card": card_json,
+                "assetCount": meta.asset_list.len(),
+                "assetList": meta.asset_list,
+                "hasModule": meta.module_data.is_some(),
+            });
+            Ok(json)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+
+        *asset_state.assets.lock().unwrap() = HashMap::new();
+        *asset_state.charx_path.lock().unwrap() = Some(charx_store);
+        Ok(result)
+    } else {
+        let result = tokio::task::spawn_blocking(move || -> Result<_, String> {
+            let ch = charx::read_character(&name, &data).map_err(|e| e.to_string())?;
+            let card_json = match &ch.card {
+                Some(charx::CardData::V2(card)) => serde_json::to_value(card).ok(),
+                Some(charx::CardData::OldTavern(card)) => serde_json::to_value(card).ok(),
+                None => None,
+            };
+            let asset_list: Vec<Value> = ch.assets.iter().map(|(name, data)| {
+                serde_json::json!({"name": name, "size": data.len()})
+            }).collect();
+            let json = serde_json::json!({
+                "card": card_json,
+                "assetCount": ch.assets.len(),
+                "assetList": asset_list,
+                "hasModule": ch.module_data.is_some(),
+            });
+            Ok((json, ch.assets))
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+
+        *asset_state.assets.lock().unwrap() = result.1;
+        *asset_state.charx_path.lock().unwrap() = None;
+        Ok(result.0)
+    }
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -155,22 +215,61 @@ pub async fn load_character_from_path(
 ) -> Result<Value, String> {
     let data_dir = persistence::get_data_dir(&app)?;
     let path = data_dir.join(&temp_name);
-    let data = std::fs::read(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
-    let _ = std::fs::remove_file(&path);
-    let result = tokio::task::spawn_blocking(move || -> Result<_, String> {
-        let ch = charx::read_character(&name, &data).map_err(|e| e.to_string())?;
-        let card_json = match &ch.card {
-            Some(charx::CardData::V2(card)) => serde_json::to_value(card).ok(),
-            Some(charx::CardData::OldTavern(card)) => serde_json::to_value(card).ok(),
-            None => None,
-        };
-        let asset_list: Vec<Value> = ch.assets.iter().map(|(n, d)| serde_json::json!({"name": n, "size": d.len()})).collect();
-        let json = serde_json::json!({"card": card_json, "assetCount": ch.assets.len(), "assetList": asset_list, "hasModule": ch.module_data.is_some()});
-        Ok((json, ch.assets))
-    }).await.map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
-    *asset_state.assets.lock().unwrap() = result.1;
-    Ok(result.0)
+
+    let is_charx = {
+        let lower = name.to_lowercase();
+        lower.ends_with(".charx") || lower.ends_with(".jpeg")
+    };
+
+    if is_charx {
+        let charx_store = data_dir.join("charx_cache.bin");
+        std::fs::rename(&path, &charx_store)
+            .or_else(|_| std::fs::copy(&path, &charx_store).map(|_| ()))
+            .map_err(|e| format!("Move charx to cache: {}", e))?;
+        let _ = std::fs::remove_file(&path);
+
+        let store_clone = charx_store.clone();
+        let result = tokio::task::spawn_blocking(move || -> Result<_, String> {
+            let data = std::fs::read(&store_clone).map_err(|e| e.to_string())?;
+            let meta = charx::read_charx_metadata(&data).map_err(|e| e.to_string())?;
+            let card_json = match &meta.card {
+                Some(charx::CardData::V2(card)) => serde_json::to_value(card).ok(),
+                Some(charx::CardData::OldTavern(card)) => serde_json::to_value(card).ok(),
+                None => None,
+            };
+            let json = serde_json::json!({
+                "card": card_json,
+                "assetCount": meta.asset_list.len(),
+                "assetList": meta.asset_list,
+                "hasModule": meta.module_data.is_some(),
+            });
+            Ok(json)
+        }).await.map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+
+        *asset_state.assets.lock().unwrap() = HashMap::new();
+        *asset_state.charx_path.lock().unwrap() = Some(charx_store);
+        Ok(result)
+    } else {
+        let data = std::fs::read(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
+        let _ = std::fs::remove_file(&path);
+        let result = tokio::task::spawn_blocking(move || -> Result<_, String> {
+            let ch = charx::read_character(&name, &data).map_err(|e| e.to_string())?;
+            let card_json = match &ch.card {
+                Some(charx::CardData::V2(card)) => serde_json::to_value(card).ok(),
+                Some(charx::CardData::OldTavern(card)) => serde_json::to_value(card).ok(),
+                None => None,
+            };
+            let asset_list: Vec<Value> = ch.assets.iter().map(|(n, d)| serde_json::json!({"name": n, "size": d.len()})).collect();
+            let json = serde_json::json!({"card": card_json, "assetCount": ch.assets.len(), "assetList": asset_list, "hasModule": ch.module_data.is_some()});
+            Ok((json, ch.assets))
+        }).await.map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+
+        *asset_state.assets.lock().unwrap() = result.1;
+        *asset_state.charx_path.lock().unwrap() = None;
+        Ok(result.0)
+    }
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -186,13 +285,28 @@ pub async fn parse_risum_from_path(temp_name: String, app: tauri::AppHandle) -> 
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn evaluate_cbs(input: String, char_name: String, user_name: String) -> String {
+pub fn evaluate_cbs(
+    input: String,
+    char_name: String,
+    user_name: String,
+    toggles: Option<HashMap<String, String>>,
+) -> String {
     let mut ctx = CbsContext {
         char_name,
         user_name,
+        toggles: toggles.unwrap_or_default(),
         ..Default::default()
     };
     evaluate(&input, &mut ctx)
+}
+
+fn build_system_instruction(prompt: &Option<String>) -> Option<Content> {
+    prompt.as_ref()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| Content {
+            role: "user".to_string(),
+            parts: vec![Part { text: Some(s.clone()), thought: None, inline_data: None }],
+        })
 }
 
 fn build_safety_settings() -> Vec<SafetySetting> {
@@ -257,6 +371,7 @@ fn log_api_call(log_state: &State<'_, RequestLogState>, provider: &str, model: &
 #[tauri::command(rename_all = "snake_case")]
 pub async fn chat_vertex(
     messages: Vec<Value>,
+    system_prompt: Option<String>,
     model: String,
     project_id: String,
     region: String,
@@ -268,9 +383,13 @@ pub async fn chat_vertex(
     tools_google_search: bool,
     tools_code_execution: bool,
     state: State<'_, AuthState>,
+    cancel_state: State<'_, StreamCancelState>,
     log_state: State<'_, RequestLogState>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
+    let cancel = retry::new_cancel_token();
+    *cancel_state.token.lock().unwrap() = Some(cancel.clone());
+
     let tokens = {
         let guard = state.vertex_tokens.lock().unwrap();
         guard.clone().ok_or("Vertex AI not connected")?
@@ -300,7 +419,7 @@ pub async fn chat_vertex(
 
     let request = GenerateRequest {
         contents: messages_to_contents(&messages),
-        system_instruction: None,
+        system_instruction: build_system_instruction(&system_prompt),
         safety_settings: build_safety_settings(),
         generation_config: GenerationConfig {
             max_output_tokens: max_tokens,
@@ -322,6 +441,7 @@ pub async fn chat_vertex(
     let start = std::time::Instant::now();
     let result = vertex_api::stream_generate(
         &client, &valid_tokens.access_token, &project_id, &region, &model, &request, on_chunk,
+        Some(cancel),
     ).await;
     let elapsed = start.elapsed().as_millis();
 
@@ -336,6 +456,7 @@ pub async fn chat_vertex(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn chat_gca(
     messages: Vec<Value>,
+    system_prompt: Option<String>,
     model: String,
     temperature: f64,
     max_tokens: u32,
@@ -347,9 +468,13 @@ pub async fn chat_gca(
     tools_url_context: bool,
     tools_code_execution: bool,
     state: State<'_, AuthState>,
+    cancel_state: State<'_, StreamCancelState>,
     log_state: State<'_, RequestLogState>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
+    let cancel = retry::new_cancel_token();
+    *cancel_state.token.lock().unwrap() = Some(cancel.clone());
+
     let tokens = {
         let guard = state.gca_tokens.lock().unwrap();
         guard.clone().ok_or("GCA not connected")?
@@ -357,8 +482,8 @@ pub async fn chat_gca(
     let client = reqwest::Client::new();
     let creds = OAuthCredentials {
         client_id: GCA_OAUTH_CLIENT_ID.to_string(),
-        client_secret: None,
-        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
+        client_secret: Some(GCA_OAUTH_CLIENT_SECRET.to_string()),
+        redirect_uri: GCA_REDIRECT_URI.to_string(),
     };
     let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
         .await.map_err(|e| e.to_string())?;
@@ -387,7 +512,7 @@ pub async fn chat_gca(
 
     let request = GenerateRequest {
         contents: messages_to_contents(&messages),
-        system_instruction: None,
+        system_instruction: build_system_instruction(&system_prompt),
         safety_settings: build_safety_settings(),
         generation_config: GenerationConfig {
             max_output_tokens: max_tokens,
@@ -409,6 +534,7 @@ pub async fn chat_gca(
     let start = std::time::Instant::now();
     let result = gca::stream_generate(
         &client, &valid_tokens.access_token, &model, &request, on_chunk,
+        Some(cancel),
     ).await;
     let elapsed = start.elapsed().as_millis();
 
@@ -423,6 +549,7 @@ pub async fn chat_gca(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn chat_mistral(
     messages: Vec<Value>,
+    system_prompt: Option<String>,
     model: String,
     api_key: String,
     temperature: f64,
@@ -431,12 +558,27 @@ pub async fn chat_mistral(
     frequency_penalty: Option<f64>,
     presence_penalty: Option<f64>,
     reasoning_effort: Option<String>,
+    cancel_state: State<'_, StreamCancelState>,
     log_state: State<'_, RequestLogState>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
+    let cancel = retry::new_cancel_token();
+    *cancel_state.token.lock().unwrap() = Some(cancel.clone());
+
+    let mut chat_msgs = messages_to_chat_messages(&messages);
+    if let Some(sp) = &system_prompt {
+        if !sp.trim().is_empty() {
+            chat_msgs.insert(0, mistral::ChatMessage {
+                role: "system".to_string(),
+                content: sp.clone(),
+                tool_calls: None,
+                tool_call_id: None,
+            });
+        }
+    }
     let request = mistral::ChatRequest {
         model: model.clone(),
-        messages: messages_to_chat_messages(&messages),
+        messages: chat_msgs,
         temperature: Some(temperature),
         top_p,
         max_tokens: Some(max_tokens),
@@ -458,7 +600,7 @@ pub async fn chat_mistral(
     };
 
     let start = std::time::Instant::now();
-    let result = mistral::chat_stream(&client, &api_key, &request, on_chunk).await;
+    let result = mistral::chat_stream(&client, &api_key, &request, on_chunk, Some(cancel)).await;
     let elapsed = start.elapsed().as_millis();
 
     match &result {
@@ -470,16 +612,52 @@ pub async fn chat_mistral(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn vertex_oauth_start(state: State<'_, AuthState>) -> Result<String, String> {
+pub async fn vertex_oauth_start(
+    state: State<'_, AuthState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
     let pkce = vertex_auth::generate_pkce();
     let creds = OAuthCredentials {
         client_id: VERTEX_CLIENT_ID.to_string(),
         client_secret: None,
         redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
     };
-    let url = vertex_auth::build_auth_url(&creds, Some(&pkce));
-    *state.vertex_pkce.lock().unwrap() = Some(pkce);
-    Ok(url)
+    let auth_url = vertex_auth::build_auth_url(&creds, Some(&pkce));
+    *state.vertex_pkce.lock().unwrap() = Some(pkce.clone());
+    if let Ok(data_dir) = persistence::get_data_dir(&app) {
+        let _ = std::fs::write(data_dir.join("pkce_verifier.txt"), &pkce.verifier);
+    }
+    Ok(auth_url)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn vertex_oauth_callback(
+    code: String,
+    state: State<'_, AuthState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let verifier = state.vertex_pkce.lock().unwrap().take()
+        .map(|p| p.verifier)
+        .or_else(|| {
+            persistence::get_data_dir(&app).ok()
+                .and_then(|d| std::fs::read_to_string(d.join("pkce_verifier.txt")).ok())
+        })
+        .ok_or("No PKCE verifier found")?;
+    if let Ok(data_dir) = persistence::get_data_dir(&app) {
+        let _ = std::fs::remove_file(data_dir.join("pkce_verifier.txt"));
+    }
+    let creds = OAuthCredentials {
+        client_id: VERTEX_CLIENT_ID.to_string(),
+        client_secret: None,
+        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
+    };
+    let client = reqwest::Client::new();
+    let tokens = vertex_auth::exchange_code(&client, &creds, &code, Some(&verifier))
+        .await
+        .map_err(|e| e.to_string())?;
+    *state.vertex_tokens.lock().unwrap() = Some(tokens);
+    state.persist_tokens(&app);
+    Ok("Vertex AI connected".into())
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -495,13 +673,14 @@ pub async fn gca_oauth_start(
 
     let auth_url = format!(
         "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=select_account+consent",
-        vertex_auth::urlencoded(GCA_OAUTH_CLIENT_ID),
-        vertex_auth::urlencoded(&redirect_uri),
-        vertex_auth::urlencoded(GCA_OAUTH_SCOPE),
+        vertex_auth::uri_encode(GCA_OAUTH_CLIENT_ID),
+        vertex_auth::uri_encode(&redirect_uri),
+        vertex_auth::uri_encode(GCA_OAUTH_SCOPE),
     );
 
     let app_clone = app.clone();
     let redirect_for_exchange = redirect_uri.clone();
+    let client = reqwest::Client::new();
     tokio::spawn(async move {
         let accept_result = tokio::time::timeout(
             std::time::Duration::from_secs(300),
@@ -523,7 +702,6 @@ pub async fn gca_oauth_start(
             Some(c) => c,
             None => return,
         };
-        let client = reqwest::Client::new();
         let creds = OAuthCredentials {
             client_id: GCA_OAUTH_CLIENT_ID.to_string(),
             client_secret: Some(GCA_OAUTH_CLIENT_SECRET.to_string()),
@@ -531,7 +709,6 @@ pub async fn gca_oauth_start(
         };
         match vertex_auth::exchange_code(&client, &creds, &code, None).await {
             Ok(tokens) => {
-                use tauri::Manager;
                 let auth: tauri::State<'_, AuthState> = app_clone.state();
                 *auth.gca_tokens.lock().unwrap() = Some(tokens);
                 auth.persist_tokens(&app_clone);
@@ -539,6 +716,7 @@ pub async fn gca_oauth_start(
                 let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><h2>GCA Connected!</h2><p>You can close this tab.</p></body></html>").await;
             }
             Err(e) => {
+                log::error!("GCA token exchange failed: {:?}", e);
                 let _ = app_clone.emit("gca-auth-complete", format!("error: {}", e));
                 let body = format!("<html><body><h2>Error</h2><p>{}</p></body></html>", e);
                 let _ = stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n{}", body).as_bytes()).await;
@@ -563,28 +741,6 @@ fn extract_code_from_request(request: &str) -> Option<String> {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn vertex_oauth_callback(
-    code: String,
-    state: State<'_, AuthState>,
-    app: tauri::AppHandle,
-) -> Result<String, String> {
-    let pkce = state.vertex_pkce.lock().unwrap().take()
-        .ok_or("No pending PKCE challenge")?;
-    let creds = OAuthCredentials {
-        client_id: VERTEX_CLIENT_ID.to_string(),
-        client_secret: None,
-        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
-    };
-    let client = reqwest::Client::new();
-    let tokens = vertex_auth::exchange_code(&client, &creds, &code, Some(&pkce.verifier))
-        .await
-        .map_err(|e| e.to_string())?;
-    *state.vertex_tokens.lock().unwrap() = Some(tokens);
-    state.persist_tokens(&app);
-    Ok("Vertex AI connected".into())
-}
-
-#[tauri::command(rename_all = "snake_case")]
 pub async fn gca_oauth_callback(
     code: String,
     state: State<'_, AuthState>,
@@ -593,7 +749,7 @@ pub async fn gca_oauth_callback(
     let creds = OAuthCredentials {
         client_id: GCA_OAUTH_CLIENT_ID.to_string(),
         client_secret: Some(GCA_OAUTH_CLIENT_SECRET.to_string()),
-        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
+        redirect_uri: GCA_REDIRECT_URI.to_string(),
     };
     let client = reqwest::Client::new();
     let tokens = vertex_auth::exchange_code(&client, &creds, &code, None)
@@ -670,7 +826,6 @@ pub async fn vertex_list_projects(
 #[tauri::command(rename_all = "snake_case")]
 pub fn vertex_oauth_disconnect(state: State<'_, AuthState>, app: tauri::AppHandle) -> String {
     *state.vertex_tokens.lock().unwrap() = None;
-    *state.vertex_pkce.lock().unwrap() = None;
     state.persist_tokens(&app);
     "Disconnected".into()
 }
@@ -830,8 +985,8 @@ pub async fn gca_load_code_assist(
     let client = reqwest::Client::new();
     let creds = OAuthCredentials {
         client_id: GCA_OAUTH_CLIENT_ID.to_string(),
-        client_secret: None,
-        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
+        client_secret: Some(GCA_OAUTH_CLIENT_SECRET.to_string()),
+        redirect_uri: GCA_REDIRECT_URI.to_string(),
     };
     let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
         .await.map_err(|e| e.to_string())?;
@@ -855,8 +1010,8 @@ pub async fn gca_check_opt_out(
     let client = reqwest::Client::new();
     let creds = OAuthCredentials {
         client_id: GCA_OAUTH_CLIENT_ID.to_string(),
-        client_secret: None,
-        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
+        client_secret: Some(GCA_OAUTH_CLIENT_SECRET.to_string()),
+        redirect_uri: GCA_REDIRECT_URI.to_string(),
     };
     let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
         .await.map_err(|e| e.to_string())?;
@@ -887,6 +1042,24 @@ pub async fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> 
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn open_custom_tab(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        let handle = app.state::<crate::browser::BrowserHandle<tauri::Wry>>();
+        handle
+            .0
+            .run_mobile_plugin::<()>("openCustomTab", url)
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        use tauri_plugin_shell::ShellExt;
+        #[allow(deprecated)]
+        app.shell().open(&url, None).map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn request_storage_permission(app: tauri::AppHandle) -> Result<Value, String> {
     #[cfg(target_os = "android")]
     {
@@ -897,6 +1070,34 @@ pub async fn request_storage_permission(app: tauri::AppHandle) -> Result<Value, 
     {
         let _ = app;
         Ok(serde_json::json!({"granted": true}))
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn request_notification_permission(app: tauri::AppHandle) -> Result<Value, String> {
+    #[cfg(target_os = "android")]
+    {
+        let handle = app.state::<crate::browser::BrowserHandle<tauri::Wry>>();
+        handle.0.run_mobile_plugin::<Value>("requestNotificationPermission", ()).map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(serde_json::json!({"granted": true}))
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn get_pending_oauth(app: tauri::AppHandle) -> Result<Value, String> {
+    #[cfg(target_os = "android")]
+    {
+        let handle = app.state::<crate::browser::BrowserHandle<tauri::Wry>>();
+        handle.0.run_mobile_plugin::<Value>("getPendingOAuth", ()).map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(serde_json::json!({}))
     }
 }
 
@@ -924,7 +1125,7 @@ pub async fn open_in_browser(app: tauri::AppHandle, url: String, package: String
         let handle = app.state::<crate::browser::BrowserHandle<tauri::Wry>>();
         handle
             .0
-            .run_mobile_plugin::<()>("openInBrowser", serde_json::json!({"url": url, "package": package}))
+            .run_mobile_plugin::<()>("openInBrowser", format!("{}|{}", package, url))
             .map_err(|e| e.to_string())
     }
     #[cfg(not(target_os = "android"))]
@@ -1104,8 +1305,8 @@ pub async fn generate_user_message(
             let client = reqwest::Client::new();
             let creds = OAuthCredentials {
                 client_id: GCA_OAUTH_CLIENT_ID.to_string(),
-                client_secret: None,
-                redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
+                client_secret: Some(GCA_OAUTH_CLIENT_SECRET.to_string()),
+                redirect_uri: GCA_REDIRECT_URI.to_string(),
             };
             let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
                 .await
@@ -1247,9 +1448,22 @@ pub fn get_asset_data(
     state: State<'_, CharacterAssetsState>,
 ) -> Result<String, String> {
     use base64::Engine;
-    let guard = state.assets.lock().unwrap();
-    let data = guard.get(&asset_name).ok_or("Asset not found")?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(data))
+
+    {
+        let guard = state.assets.lock().unwrap();
+        if let Some(data) = guard.get(&asset_name) {
+            return Ok(base64::engine::general_purpose::STANDARD.encode(data));
+        }
+    }
+
+    let charx_guard = state.charx_path.lock().unwrap();
+    if let Some(path) = charx_guard.as_ref() {
+        let data = charx::read_charx_asset_from_file(path, &asset_name)
+            .map_err(|e| e.to_string())?;
+        return Ok(base64::engine::general_purpose::STANDARD.encode(&data));
+    }
+
+    Err("Asset not found".into())
 }
 
 #[tauri::command(rename_all = "snake_case")]

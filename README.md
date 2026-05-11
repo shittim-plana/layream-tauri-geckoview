@@ -1,90 +1,119 @@
 # Layream
 
-Prompt editor, AI testing studio, and more — powered by Rust.
+Prompt editor, AI testing studio, and bot creation tool — powered by Rust.
 
-프롬프트 편집기, AI 테스팅 스튜디오 — Rust 기반.
+프롬프트 편집기, AI 테스팅 스튜디오, 봇 제작 도구 — Rust 기반.
 
 ## Overview / 개요
 
-- **Android app**: Tauri 2.0 + Rust
-- **Web app**: Svelte + Rust (WASM)
-- **Core**: Shared Rust crate for prompt parsing, AI API integration, and more
+- **Android app**: Tauri 2.0 + Rust backend + Svelte 5 frontend
+- **Web app** (planned): Svelte + Rust (WASM), GitHub Pages
+- **Core**: Shared Rust crate (`layream-core`) — prompt parsing, CBS evaluation, AI API, cryptography
 
 ## Features / 기능
 
-- Load/edit prompt presets (RisuAI .risup / .json compatible)
-- Character card viewer (.charx / .jpeg / .png / .json) with asset gallery, regex display, alternate greetings
-- .risum module parser and viewer
-- CBS template editor with syntax highlighting and diagnostics
-- Test prompts via Vertex AI, GCA, Mistral AI (SSE streaming)
-- **Autopilot v2**: automated conversation testing — user persona, char-to-char mode, pause/resume FSM, structured output (response_schema)
-- **HyPA v3**: auto-summarize + cosine search + RAG context injection + Pin (pin_boost) + invalidation/cleanup + viewer modal
-- Customscript regex editor
-- Session/preset persistence with app-close flush
-- Structured output support (Vertex/GCA responseSchema + Mistral json_schema)
+### Prompt & Character / 프롬프트 & 캐릭터
+
+- Load/edit prompt presets (RisuAI `.risup` / `.json` compatible, lossless roundtrip)
+- **assemblePrompt** — promptTemplate traversal + CBS evaluation + regex + type-based assembly (plain/jailbreak/cot/description/persona/lorebook/authornote/postEverything/chat)
+- Character card viewer (`.charx` / `.jpeg` / `.png` / `.json`) with lazy loading, asset gallery, emotion mapping, alternate greetings
+- `.risum` module parser (binary container + rpack + JSON)
+- CBS template editor with syntax highlighting, block diagnostics (#when/#each/#puredisplay/#if), 40+ functions
+- Customscript regex editor with live testing
+- Library system — save/load/delete presets, characters, modules independently
+
+### Chat & AI / 채팅 & AI
+
+- Chat with streaming (SSE) via Vertex AI, GCA, Mistral AI
+- Retry with exponential backoff + cancel token (429/5xx handling)
+- First message + alternate greetings swipe
+- Message delete + response regeneration
+- **Autopilot v2** — automated conversation testing: user persona, char-to-char mode, pause/resume FSM, structured output
+- **HyPA v3** — auto-summarize + cosine search + RAG context injection + pin/invalidation/cleanup + import (RisuAI hypaV3 format) + viewer modal
+- Structured output (Vertex/GCA `responseSchema` + Mistral `json_schema`)
+
+### OAuth & Connectivity / OAuth & 연결
+
+- Vertex AI OAuth — PKCE, deep link redirect, no client_secret
+- GCA OAuth — client_secret, loopback TCP redirect
+- Browser picker + Chrome Custom Tabs
+- Session/preset/character persistence with app-close flush
 
 ---
 
-- 프롬프트 프리셋 로드/편집 (RisuAI .risup / .json 호환)
-- 캐릭터 카드 뷰어 (.charx / .jpeg / .png / .json) + 에셋 갤러리, 정규식, 대체 인사말
-- .risum 모듈 파서 및 뷰어
-- CBS 템플릿 에디터 (구문 하이라이팅 + 블록 진단)
-- Vertex AI, GCA, Mistral AI로 프롬프트 테스트 (SSE 스트리밍)
-- **오토파일럿 v2**: 자동 대화 테스트 — 유저 페르소나, 캐릭터 간 대화, 일시정지/재개, structured output
-- **HyPA v3**: 자동 요약 + cosine 검색 + RAG 컨텍스트 주입 + 핀(pin_boost) + 무효화/정리 + 뷰어 모달
-- customscript 정규식 편집기
-- 세션/프리셋 영속화 + 앱 종료 시 자동 저장
-- Structured output (Vertex/GCA responseSchema + Mistral json_schema)
+- 프롬프트 프리셋 로드/편집 (RisuAI `.risup` / `.json` 호환, 무손실 왕복)
+- **assemblePrompt** — promptTemplate 순회 + CBS 평가 + regex + type별 조립
+- 캐릭터 카드 뷰어 + lazy loading, 에셋 갤러리, 감정 매핑, 대체 인사말
+- `.risum` 모듈 파서 (바이너리 컨테이너 + rpack + JSON)
+- CBS 템플릿 에디터 (구문 하이라이팅 + 블록 진단 + 40+ 함수)
+- 라이브러리 시스템 — 프리셋/캐릭터/모듈 독립 저장/로드/삭제
 
 ## Supported API Providers / 지원 API
 
-| Provider | Auth | Streaming | Dynamic Model List |
-|----------|------|-----------|-------------------|
-| Vertex AI (Gemini) | OAuth | SSE | /v1/publishers/google/models |
-| GCA (Gemini Code Assistant) | OAuth | SSE | - |
-| Mistral AI | API Key | SSE | /v1/models |
-| Voyage AI (embeddings) | API Key | - | - |
+| Provider | Auth | Streaming | Embedding | Dynamic Model List |
+|----------|------|-----------|-----------|-------------------|
+| Vertex AI (Gemini) | OAuth (PKCE) | SSE | gemini-embedding-001/2 | /v1/publishers/google/models |
+| GCA | OAuth (secret) | SSE | - | Fixed list |
+| Mistral AI | API Key | SSE | - | /v1/models (capabilities filter) |
+| Voyage AI | API Key | - | voyage-3 | - |
 
-Model selection supports both predefined suggestions and free-text input for unlisted/hidden models.
+Model selection: predefined suggestions + free-text input + API dynamic fetch.
 
-모델 선택은 고정 제안 목록 + 자유 입력 + API 동적 조회를 지원. 비공개 모델도 직접 입력 가능.
+모델 선택: 고정 제안 + 자유 입력 + API 동적 조회.
 
 ## Tech Stack / 기술 스택
 
-- **Rust** — core logic, compile-time safety / 코어 로직, 컴파일 타임 안전성
-- **Tauri 2.0** — native Android app / 네이티브 Android 앱
-- **Svelte 5** — web frontend / 웹 프론트엔드
+- **Rust** (5,400+ LOC) — core logic, zero production `.unwrap()`, compile-time safety
+- **Tauri 2.0** — native Android app, Rust backend as server
+- **Svelte 5** — web frontend (~50KB gzipped)
 - **reqwest + rustls** — HTTP without system OpenSSL
 
 ## Project Structure / 프로젝트 구조
 
 ```
-layream-core/     Shared Rust library (16 modules, 85+ tests)
-layream-app/      Tauri 2.0 app (Svelte 5 frontend + Rust backend)
-  src/views/        ChatView, AutopilotView, HypaView, TestView, PresetView, CharacterView, SettingsView
-  src/components/   FileImport, CBSEditor, HypaModal
-  src-tauri/src/    commands.rs, commands_hypa.rs, persistence.rs, lib.rs
+layream-core/       Shared Rust library (18 modules, 94 tests)
+  src/
+    cbs/              CBS parser + highlighter
+    preset.rs         Preset parsing (RPack → gzip → msgpack → AES-GCM)
+    charx.rs          Character parsing + lazy loading
+    vertex_auth.rs    Vertex OAuth + PKCE
+    vertex_api.rs     Vertex AI API (stream, embed, list_models)
+    gca.rs            GCA API (separate OAuth, loopback)
+    mistral.rs        Mistral API (chat, list_models, capabilities filter)
+    retry.rs          Retry + cancel token (exponential backoff)
+    hypa.rs           HyPA v3 memory engine
+
+layream-app/        Tauri 2.0 app
+  src/views/          ChatView, PresetView, CharacterView, SettingsView,
+                      AutopilotView, HypaView, LibraryView, TestView
+  src/components/     FileImport, CBSEditor, HypaModal
+  src-tauri/src/      commands.rs, commands_hypa.rs, persistence.rs
 ```
 
 ## Build / 빌드
 
 ```bash
-# Core library / 코어 라이브러리
+# Core tests / 코어 테스트
 cargo test -p layream-core
 
-# Frontend / 프론트엔드
-cd layream-app && npm install && npm run build
+# Frontend dev / 프론트엔드 개발
+cd layream-app && npm install && npm run dev
+
+# Android APK
+source scripts/env.sh
+cd layream-app
+npm run tauri android build -- --apk --target aarch64
 ```
 
 ## Status / 상태
 
-**v0.3.0-alpha** — [Download APK](https://github.com/shittim-plana/layream/releases/tag/v0.3.0-alpha)
+**v0.3.0** — [Download APK](https://github.com/shittim-plana/layream/releases/tag/v0.3.0)
 
-Core library stable (85+ tests). Android APK available as prerelease. Web build not yet available.
+Core library stable (94 tests, 0 production unwrap). Android APK available. Web build planned.
 
-**v0.3.0-alpha** — [APK 다운로드](https://github.com/shittim-plana/layream/releases/tag/v0.3.0-alpha)
+**v0.3.0** — [APK 다운로드](https://github.com/shittim-plana/layream/releases/tag/v0.3.0)
 
-코어 라이브러리 안정 (85+ 테스트). Android APK prerelease 제공. 웹 빌드는 미제공.
+코어 라이브러리 안정 (94개 테스트, 프로덕션 unwrap 0개). Android APK 제공. 웹 빌드 예정.
 
 ## License / 라이선스
 

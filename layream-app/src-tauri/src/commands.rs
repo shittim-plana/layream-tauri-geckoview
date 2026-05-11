@@ -58,17 +58,21 @@ impl Default for AuthState {
 impl AuthState {
     pub fn persist_tokens(&self, app: &tauri::AppHandle) {
         if let Ok(data_dir) = persistence::get_data_dir(app) {
-            let vertex = self.vertex_tokens.lock().unwrap().clone();
-            let gca = self.gca_tokens.lock().unwrap().clone();
-            let _ = persistence::save_tokens(&data_dir, &vertex, &gca);
+            if let (Ok(vertex), Ok(gca)) = (self.vertex_tokens.lock(), self.gca_tokens.lock()) {
+                let _ = persistence::save_tokens(&data_dir, &vertex.clone(), &gca.clone());
+            }
         }
     }
 
     pub fn load_persisted_tokens(&self, app: &tauri::AppHandle) {
         if let Ok(data_dir) = persistence::get_data_dir(app) {
             if let Ok((vertex, gca)) = persistence::load_tokens(&data_dir) {
-                *self.vertex_tokens.lock().unwrap() = vertex;
-                *self.gca_tokens.lock().unwrap() = gca;
+                if let Ok(mut guard) = self.vertex_tokens.lock() {
+                    *guard = vertex;
+                }
+                if let Ok(mut guard) = self.gca_tokens.lock() {
+                    *guard = gca;
+                }
             }
         }
     }
@@ -85,10 +89,12 @@ impl Default for StreamCancelState {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn cancel_chat(state: State<'_, StreamCancelState>) {
-    if let Some(token) = state.token.lock().unwrap().as_ref() {
+pub fn cancel_chat(state: State<'_, StreamCancelState>) -> Result<(), String> {
+    let guard = state.token.lock().map_err(|e| format!("lock poisoned: {e}"))?;
+    if let Some(token) = guard.as_ref() {
         token.store(true, std::sync::atomic::Ordering::Relaxed);
     }
+    Ok(())
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -154,8 +160,8 @@ pub async fn load_character(
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
 
-        *asset_state.assets.lock().unwrap() = HashMap::new();
-        *asset_state.charx_path.lock().unwrap() = Some(charx_store);
+        *asset_state.assets.lock().map_err(|e| format!("lock poisoned: {e}"))? = HashMap::new();
+        *asset_state.charx_path.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(charx_store);
         Ok(result)
     } else {
         let result = tokio::task::spawn_blocking(move || -> Result<_, String> {
@@ -180,8 +186,8 @@ pub async fn load_character(
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
 
-        *asset_state.assets.lock().unwrap() = result.1;
-        *asset_state.charx_path.lock().unwrap() = None;
+        *asset_state.assets.lock().map_err(|e| format!("lock poisoned: {e}"))? = result.1;
+        *asset_state.charx_path.lock().map_err(|e| format!("lock poisoned: {e}"))? = None;
         Ok(result.0)
     }
 }
@@ -247,8 +253,8 @@ pub async fn load_character_from_path(
         }).await.map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
 
-        *asset_state.assets.lock().unwrap() = HashMap::new();
-        *asset_state.charx_path.lock().unwrap() = Some(charx_store);
+        *asset_state.assets.lock().map_err(|e| format!("lock poisoned: {e}"))? = HashMap::new();
+        *asset_state.charx_path.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(charx_store);
         Ok(result)
     } else {
         let data = std::fs::read(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
@@ -266,8 +272,8 @@ pub async fn load_character_from_path(
         }).await.map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
 
-        *asset_state.assets.lock().unwrap() = result.1;
-        *asset_state.charx_path.lock().unwrap() = None;
+        *asset_state.assets.lock().map_err(|e| format!("lock poisoned: {e}"))? = result.1;
+        *asset_state.charx_path.lock().map_err(|e| format!("lock poisoned: {e}"))? = None;
         Ok(result.0)
     }
 }
@@ -354,17 +360,18 @@ fn log_api_call(log_state: &State<'_, RequestLogState>, provider: &str, model: &
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let mut logs = log_state.logs.lock().unwrap();
-    logs.push(serde_json::json!({
-        "timestamp": timestamp,
-        "provider": provider,
-        "model": model,
-        "status": status,
-        "duration_ms": duration_ms,
-    }));
-    if logs.len() > MAX_LOGS {
-        let excess = logs.len() - MAX_LOGS;
-        logs.drain(..excess);
+    if let Ok(mut logs) = log_state.logs.lock() {
+        logs.push(serde_json::json!({
+            "timestamp": timestamp,
+            "provider": provider,
+            "model": model,
+            "status": status,
+            "duration_ms": duration_ms,
+        }));
+        if logs.len() > MAX_LOGS {
+            let excess = logs.len() - MAX_LOGS;
+            logs.drain(..excess);
+        }
     }
 }
 
@@ -388,10 +395,10 @@ pub async fn chat_vertex(
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     let cancel = retry::new_cancel_token();
-    *cancel_state.token.lock().unwrap() = Some(cancel.clone());
+    *cancel_state.token.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(cancel.clone());
 
     let tokens = {
-        let guard = state.vertex_tokens.lock().unwrap();
+        let guard = state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
         guard.clone().ok_or("Vertex AI not connected")?
     };
     let client = reqwest::Client::new();
@@ -403,7 +410,7 @@ pub async fn chat_vertex(
     let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
         .await.map_err(|e| e.to_string())?;
     if valid_tokens.access_token != tokens.access_token {
-        *state.vertex_tokens.lock().unwrap() = Some(valid_tokens.clone());
+        *state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
         state.persist_tokens(&app);
     }
 
@@ -473,10 +480,10 @@ pub async fn chat_gca(
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     let cancel = retry::new_cancel_token();
-    *cancel_state.token.lock().unwrap() = Some(cancel.clone());
+    *cancel_state.token.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(cancel.clone());
 
     let tokens = {
-        let guard = state.gca_tokens.lock().unwrap();
+        let guard = state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
         guard.clone().ok_or("GCA not connected")?
     };
     let client = reqwest::Client::new();
@@ -488,7 +495,7 @@ pub async fn chat_gca(
     let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
         .await.map_err(|e| e.to_string())?;
     if valid_tokens.access_token != tokens.access_token {
-        *state.gca_tokens.lock().unwrap() = Some(valid_tokens.clone());
+        *state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
         state.persist_tokens(&app);
     }
 
@@ -563,7 +570,7 @@ pub async fn chat_mistral(
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     let cancel = retry::new_cancel_token();
-    *cancel_state.token.lock().unwrap() = Some(cancel.clone());
+    *cancel_state.token.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(cancel.clone());
 
     let mut chat_msgs = messages_to_chat_messages(&messages);
     if let Some(sp) = &system_prompt {
@@ -623,7 +630,7 @@ pub async fn vertex_oauth_start(
         redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
     };
     let auth_url = vertex_auth::build_auth_url(&creds, Some(&pkce));
-    *state.vertex_pkce.lock().unwrap() = Some(pkce.clone());
+    *state.vertex_pkce.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(pkce.clone());
     if let Ok(data_dir) = persistence::get_data_dir(&app) {
         let _ = std::fs::write(data_dir.join("pkce_verifier.txt"), &pkce.verifier);
     }
@@ -636,7 +643,7 @@ pub async fn vertex_oauth_callback(
     state: State<'_, AuthState>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    let verifier = state.vertex_pkce.lock().unwrap().take()
+    let verifier = state.vertex_pkce.lock().map_err(|e| format!("lock poisoned: {e}"))?.take()
         .map(|p| p.verifier)
         .or_else(|| {
             persistence::get_data_dir(&app).ok()
@@ -655,7 +662,7 @@ pub async fn vertex_oauth_callback(
     let tokens = vertex_auth::exchange_code(&client, &creds, &code, Some(&verifier))
         .await
         .map_err(|e| e.to_string())?;
-    *state.vertex_tokens.lock().unwrap() = Some(tokens);
+    *state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(tokens);
     state.persist_tokens(&app);
     Ok("Vertex AI connected".into())
 }
@@ -710,7 +717,9 @@ pub async fn gca_oauth_start(
         match vertex_auth::exchange_code(&client, &creds, &code, None).await {
             Ok(tokens) => {
                 let auth: tauri::State<'_, AuthState> = app_clone.state();
-                *auth.gca_tokens.lock().unwrap() = Some(tokens);
+                if let Ok(mut guard) = auth.gca_tokens.lock() {
+                    *guard = Some(tokens);
+                }
                 auth.persist_tokens(&app_clone);
                 let _ = app_clone.emit("gca-auth-complete", "ok");
                 let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><h2>GCA Connected!</h2><p>You can close this tab.</p></body></html>").await;
@@ -755,15 +764,15 @@ pub async fn gca_oauth_callback(
     let tokens = vertex_auth::exchange_code(&client, &creds, &code, None)
         .await
         .map_err(|e| e.to_string())?;
-    *state.gca_tokens.lock().unwrap() = Some(tokens);
+    *state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(tokens);
     state.persist_tokens(&app);
     Ok("GCA connected".into())
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn vertex_oauth_status(state: State<'_, AuthState>) -> Value {
-    let tokens = state.vertex_tokens.lock().unwrap();
-    match tokens.as_ref() {
+pub fn vertex_oauth_status(state: State<'_, AuthState>) -> Result<Value, String> {
+    let tokens = state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
+    Ok(match tokens.as_ref() {
         Some(t) if !t.is_expired() => serde_json::json!({
             "connected": true,
             "expired": false,
@@ -775,13 +784,13 @@ pub fn vertex_oauth_status(state: State<'_, AuthState>) -> Value {
         None => serde_json::json!({
             "connected": false,
         }),
-    }
+    })
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn gca_oauth_status(state: State<'_, AuthState>) -> Value {
-    let tokens = state.gca_tokens.lock().unwrap();
-    match tokens.as_ref() {
+pub fn gca_oauth_status(state: State<'_, AuthState>) -> Result<Value, String> {
+    let tokens = state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
+    Ok(match tokens.as_ref() {
         Some(t) if !t.is_expired() => serde_json::json!({
             "connected": true,
             "expired": false,
@@ -793,7 +802,7 @@ pub fn gca_oauth_status(state: State<'_, AuthState>) -> Value {
         None => serde_json::json!({
             "connected": false,
         }),
-    }
+    })
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -802,7 +811,7 @@ pub async fn vertex_list_projects(
     app: tauri::AppHandle,
 ) -> Result<Value, String> {
     let tokens = {
-        let guard = state.vertex_tokens.lock().unwrap();
+        let guard = state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
         guard.clone().ok_or("Not connected")?
     };
     let client = reqwest::Client::new();
@@ -814,7 +823,7 @@ pub async fn vertex_list_projects(
     let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
         .await.map_err(|e| e.to_string())?;
     if valid_tokens.access_token != tokens.access_token {
-        *state.vertex_tokens.lock().unwrap() = Some(valid_tokens.clone());
+        *state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
         state.persist_tokens(&app);
     }
     let projects = layream_core::vertex_auth::list_gcp_projects(&client, &valid_tokens.access_token)
@@ -824,17 +833,17 @@ pub async fn vertex_list_projects(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn vertex_oauth_disconnect(state: State<'_, AuthState>, app: tauri::AppHandle) -> String {
-    *state.vertex_tokens.lock().unwrap() = None;
+pub fn vertex_oauth_disconnect(state: State<'_, AuthState>, app: tauri::AppHandle) -> Result<String, String> {
+    *state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = None;
     state.persist_tokens(&app);
-    "Disconnected".into()
+    Ok("Disconnected".into())
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn gca_oauth_disconnect(state: State<'_, AuthState>, app: tauri::AppHandle) -> String {
-    *state.gca_tokens.lock().unwrap() = None;
+pub fn gca_oauth_disconnect(state: State<'_, AuthState>, app: tauri::AppHandle) -> Result<String, String> {
+    *state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = None;
     state.persist_tokens(&app);
-    "Disconnected".into()
+    Ok("Disconnected".into())
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -853,7 +862,7 @@ pub async fn vertex_list_models(
     app: tauri::AppHandle,
 ) -> Result<Value, String> {
     let tokens = {
-        let guard = state.vertex_tokens.lock().unwrap();
+        let guard = state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
         guard.clone().ok_or("Vertex AI not connected")?
     };
     let client = reqwest::Client::new();
@@ -865,7 +874,7 @@ pub async fn vertex_list_models(
     let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
         .await.map_err(|e| e.to_string())?;
     if valid_tokens.access_token != tokens.access_token {
-        *state.vertex_tokens.lock().unwrap() = Some(valid_tokens.clone());
+        *state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
         state.persist_tokens(&app);
     }
     let models = layream_core::vertex_api::list_models(&client, &valid_tokens.access_token, &region)
@@ -885,13 +894,14 @@ impl Default for RequestLogState {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn get_request_logs(state: State<'_, RequestLogState>) -> Vec<Value> {
-    state.logs.lock().unwrap().clone()
+pub fn get_request_logs(state: State<'_, RequestLogState>) -> Result<Vec<Value>, String> {
+    Ok(state.logs.lock().map_err(|e| format!("lock poisoned: {e}"))?.clone())
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn clear_request_logs(state: State<'_, RequestLogState>) {
-    state.logs.lock().unwrap().clear();
+pub fn clear_request_logs(state: State<'_, RequestLogState>) -> Result<(), String> {
+    state.logs.lock().map_err(|e| format!("lock poisoned: {e}"))?.clear();
+    Ok(())
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -940,7 +950,7 @@ pub async fn embed_vertex(
     app: tauri::AppHandle,
 ) -> Result<Vec<Vec<f64>>, String> {
     let tokens = {
-        let guard = state.vertex_tokens.lock().unwrap();
+        let guard = state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
         guard.clone().ok_or("Vertex AI not connected")?
     };
     let client = reqwest::Client::new();
@@ -952,7 +962,7 @@ pub async fn embed_vertex(
     let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
         .await.map_err(|e| e.to_string())?;
     if valid_tokens.access_token != tokens.access_token {
-        *state.vertex_tokens.lock().unwrap() = Some(valid_tokens.clone());
+        *state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
         state.persist_tokens(&app);
     }
 
@@ -979,7 +989,7 @@ pub async fn gca_load_code_assist(
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     let tokens = {
-        let guard = state.gca_tokens.lock().unwrap();
+        let guard = state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
         guard.clone().ok_or("GCA not connected")?
     };
     let client = reqwest::Client::new();
@@ -991,7 +1001,7 @@ pub async fn gca_load_code_assist(
     let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
         .await.map_err(|e| e.to_string())?;
     if valid_tokens.access_token != tokens.access_token {
-        *state.gca_tokens.lock().unwrap() = Some(valid_tokens.clone());
+        *state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
         state.persist_tokens(&app);
     }
     gca::load_code_assist(&client, &valid_tokens.access_token)
@@ -1004,7 +1014,7 @@ pub async fn gca_check_opt_out(
     app: tauri::AppHandle,
 ) -> Result<bool, String> {
     let tokens = {
-        let guard = state.gca_tokens.lock().unwrap();
+        let guard = state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
         guard.clone().ok_or("GCA not connected")?
     };
     let client = reqwest::Client::new();
@@ -1016,7 +1026,7 @@ pub async fn gca_check_opt_out(
     let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
         .await.map_err(|e| e.to_string())?;
     if valid_tokens.access_token != tokens.access_token {
-        *state.gca_tokens.lock().unwrap() = Some(valid_tokens.clone());
+        *state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
         state.persist_tokens(&app);
     }
     gca::check_and_opt_out(&client, &valid_tokens.access_token)
@@ -1035,9 +1045,8 @@ pub async fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> 
     }
     #[cfg(not(target_os = "android"))]
     {
-        use tauri_plugin_shell::ShellExt;
-        #[allow(deprecated)]
-        app.shell().open(&url, None).map_err(|e| e.to_string())
+        use tauri_plugin_opener::OpenerExt;
+        app.opener().open_url(&url, None::<&str>).map_err(|e| e.to_string())
     }
 }
 
@@ -1053,9 +1062,8 @@ pub async fn open_custom_tab(app: tauri::AppHandle, url: String) -> Result<(), S
     }
     #[cfg(not(target_os = "android"))]
     {
-        use tauri_plugin_shell::ShellExt;
-        #[allow(deprecated)]
-        app.shell().open(&url, None).map_err(|e| e.to_string())
+        use tauri_plugin_opener::OpenerExt;
+        app.opener().open_url(&url, None::<&str>).map_err(|e| e.to_string())
     }
 }
 
@@ -1130,9 +1138,8 @@ pub async fn open_in_browser(app: tauri::AppHandle, url: String, package: String
     }
     #[cfg(not(target_os = "android"))]
     {
-        use tauri_plugin_shell::ShellExt;
-        #[allow(deprecated)]
-        app.shell().open(&url, None).map_err(|e| e.to_string())
+        use tauri_plugin_opener::OpenerExt;
+        app.opener().open_url(&url, None::<&str>).map_err(|e| e.to_string())
     }
 }
 
@@ -1246,7 +1253,7 @@ pub async fn generate_user_message(
             let region = region.as_deref().unwrap_or("us-central1");
 
             let tokens = {
-                let guard = state.vertex_tokens.lock().unwrap();
+                let guard = state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
                 guard.clone().ok_or("Vertex AI not connected")?
             };
             let client = reqwest::Client::new();
@@ -1259,7 +1266,7 @@ pub async fn generate_user_message(
                 .await
                 .map_err(|e| e.to_string())?;
             if valid_tokens.access_token != tokens.access_token {
-                *state.vertex_tokens.lock().unwrap() = Some(valid_tokens.clone());
+                *state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
                 state.persist_tokens(&app);
             }
 
@@ -1299,7 +1306,7 @@ pub async fn generate_user_message(
         }
         "gca" => {
             let tokens = {
-                let guard = state.gca_tokens.lock().unwrap();
+                let guard = state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
                 guard.clone().ok_or("GCA not connected")?
             };
             let client = reqwest::Client::new();
@@ -1312,7 +1319,7 @@ pub async fn generate_user_message(
                 .await
                 .map_err(|e| e.to_string())?;
             if valid_tokens.access_token != tokens.access_token {
-                *state.gca_tokens.lock().unwrap() = Some(valid_tokens.clone());
+                *state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
                 state.persist_tokens(&app);
             }
 
@@ -1450,13 +1457,13 @@ pub fn get_asset_data(
     use base64::Engine;
 
     {
-        let guard = state.assets.lock().unwrap();
+        let guard = state.assets.lock().map_err(|e| format!("lock poisoned: {e}"))?;
         if let Some(data) = guard.get(&asset_name) {
             return Ok(base64::engine::general_purpose::STANDARD.encode(data));
         }
     }
 
-    let charx_guard = state.charx_path.lock().unwrap();
+    let charx_guard = state.charx_path.lock().map_err(|e| format!("lock poisoned: {e}"))?;
     if let Some(path) = charx_guard.as_ref() {
         let data = charx::read_charx_asset_from_file(path, &asset_name)
             .map_err(|e| e.to_string())?;

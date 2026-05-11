@@ -10,7 +10,9 @@ pub const GCA_OAUTH_CLIENT_ID: &str = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib
 pub const GCA_OAUTH_CLIENT_SECRET: &str = "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";
 pub const GCA_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile";
 
+// Source: risu-gca.js mA array (GCA plugin v0.2.2)
 pub const GCA_MODELS: &[&str] = &[
+    "gemini-3.1-pro",
     "gemini-3.1-pro-preview",
     "gemini-3.1-flash-lite-preview",
     "gemini-3-pro-preview",
@@ -230,5 +232,6 @@ mod tests {
         assert!(!GCA_MODELS.is_empty());
         assert!(GCA_MODELS.contains(&"gemini-2.5-flash"));
         assert!(GCA_MODELS.contains(&"gemini-3-pro-preview"));
+        assert!(GCA_MODELS.contains(&"gemini-3.1-pro"));
     }
 }

@@ -154,14 +154,14 @@ async fn refresh_token(
         state
             .gca_tokens
             .lock()
-            .unwrap()
+            .map_err(|e| format!("lock poisoned: {e}"))?
             .clone()
             .ok_or("GCA not connected")?
     } else {
         state
             .vertex_tokens
             .lock()
-            .unwrap()
+            .map_err(|e| format!("lock poisoned: {e}"))?
             .clone()
             .ok_or("Vertex AI not connected")?
     };
@@ -172,9 +172,9 @@ async fn refresh_token(
 
     if valid.access_token != current.access_token {
         if is_gca {
-            *state.gca_tokens.lock().unwrap() = Some(valid.clone());
+            *state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid.clone());
         } else {
-            *state.vertex_tokens.lock().unwrap() = Some(valid.clone());
+            *state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid.clone());
         }
         state.persist_tokens(app);
     }

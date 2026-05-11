@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -211,6 +213,39 @@ pub async fn chat_stream(
     Ok(full_text)
 }
 
+/// Returns `true` if the model's capabilities indicate it supports chat completions.
+/// Models without a `capabilities` object are excluded (soundness over completeness:
+/// we only include models that explicitly declare chat support).
+fn is_chat_model(model: &ModelInfo) -> bool {
+    model
+        .capabilities
+        .as_ref()
+        .and_then(|caps| caps.get("completion_chat"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Extracts the base model name by stripping date/version suffixes and `-latest`.
+///
+/// Examples:
+///   `"mistral-large-latest"` → `"mistral-large"`
+///   `"mistral-medium-2505"` → `"mistral-medium"`
+///   `"mistral-medium-2501"` → `"mistral-medium"`
+///   `"codestral-2501"` → `"codestral"`
+fn model_base_name(id: &str) -> &str {
+    let s = id.strip_suffix("-latest").unwrap_or(id);
+    // Strip trailing `-YYMM` or `-YYMMDD` date suffixes (4–6 digit patterns)
+    if let Some(pos) = s.rfind('-') {
+        let suffix = &s[pos + 1..];
+        let all_digits = !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit());
+        let is_date_suffix = all_digits && (suffix.len() == 4 || suffix.len() == 6);
+        if is_date_suffix {
+            return &s[..pos];
+        }
+    }
+    s
+}
+
 pub async fn list_models(
     client: &reqwest::Client,
     api_key: &str,
@@ -228,7 +263,51 @@ pub async fn list_models(
         .await
         .map_err(|e| LayreamError::Http(e.to_string()))?;
 
-    Ok(list.data)
+    // 1. Filter: only models with capabilities.completion_chat == true
+    let chat_models: Vec<ModelInfo> = list.data.into_iter().filter(is_chat_model).collect();
+
+    // 2. Deduplicate: for each base name, keep the "-latest" variant if present,
+    //    otherwise the model with the highest `created` timestamp.
+    let mut best: HashMap<String, ModelInfo> = HashMap::new();
+    for model in chat_models {
+        let base = model_base_name(&model.id).to_owned();
+        let dominated = best.get(&base).map_or(false, |existing| {
+            let existing_is_latest = existing.id.ends_with("-latest");
+            let new_is_latest = model.id.ends_with("-latest");
+            if existing_is_latest && !new_is_latest {
+                // Existing is -latest, new is not: existing wins
+                true
+            } else if !existing_is_latest && new_is_latest {
+                // New is -latest: new wins (not dominated)
+                false
+            } else {
+                // Both same suffix class: higher created wins
+                existing.created.unwrap_or(0) >= model.created.unwrap_or(0)
+            }
+        });
+        if !dominated {
+            best.insert(base, model);
+        }
+    }
+
+    let mut models: Vec<ModelInfo> = best.into_values().collect();
+    models.sort_by(|a, b| {
+        let a_latest = a.id.ends_with("-latest");
+        let b_latest = b.id.ends_with("-latest");
+        match (a_latest, b_latest) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => {
+                // Prefer newer models, then alphabetical
+                b.created
+                    .unwrap_or(0)
+                    .cmp(&a.created.unwrap_or(0))
+                    .then_with(|| a.id.cmp(&b.id))
+            }
+        }
+    });
+
+    Ok(models)
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -364,5 +443,89 @@ mod tests {
         assert!(json.contains("\"name\":\"user_message\""));
         assert!(json.contains("\"strict\":true"));
         assert!(json.contains("\"properties\""));
+    }
+
+    // -- model filtering tests --
+
+    fn make_model(id: &str, chat: Option<bool>, created: Option<u64>) -> ModelInfo {
+        let capabilities = chat.map(|v| serde_json::json!({"completion_chat": v}));
+        ModelInfo {
+            id: id.to_string(),
+            object: None,
+            created,
+            owned_by: None,
+            capabilities,
+            model_type: None,
+        }
+    }
+
+    #[test]
+    fn is_chat_model_filters_correctly() {
+        // completion_chat == true → included
+        assert!(is_chat_model(&make_model("mistral-large-latest", Some(true), None)));
+
+        // completion_chat == false → excluded
+        assert!(!is_chat_model(&make_model("mistral-embed", Some(false), None)));
+
+        // No capabilities → excluded (soundness: unknown capability = not chat)
+        assert!(!is_chat_model(&make_model("unknown-model", None, None)));
+
+        // capabilities present but completion_chat absent → excluded
+        let model = ModelInfo {
+            id: "partial-caps".into(),
+            object: None,
+            created: None,
+            owned_by: None,
+            capabilities: Some(serde_json::json!({"completion_fim": true})),
+            model_type: None,
+        };
+        assert!(!is_chat_model(&model));
+    }
+
+    #[test]
+    fn model_base_name_extraction() {
+        assert_eq!(model_base_name("mistral-large-latest"), "mistral-large");
+        assert_eq!(model_base_name("mistral-medium-2505"), "mistral-medium");
+        assert_eq!(model_base_name("mistral-medium-250115"), "mistral-medium");
+        assert_eq!(model_base_name("codestral-2501"), "codestral");
+        assert_eq!(model_base_name("mistral-large-2411"), "mistral-large");
+        // No suffix to strip
+        assert_eq!(model_base_name("pixtral-large"), "pixtral-large");
+        // 3-digit suffix is NOT a date → kept as-is
+        assert_eq!(model_base_name("model-123"), "model-123");
+        // 5-digit suffix is NOT a date → kept as-is
+        assert_eq!(model_base_name("model-12345"), "model-12345");
+    }
+
+    #[test]
+    fn deduplication_prefers_latest() {
+        let models = vec![
+            make_model("mistral-large-latest", Some(true), Some(100)),
+            make_model("mistral-large-2411", Some(true), Some(200)),
+            make_model("mistral-large-2505", Some(true), Some(300)),
+        ];
+
+        // Simulate the dedup logic
+        let mut best: std::collections::HashMap<String, ModelInfo> = std::collections::HashMap::new();
+        for model in models {
+            let base = model_base_name(&model.id).to_owned();
+            let dominated = best.get(&base).map_or(false, |existing| {
+                let existing_is_latest = existing.id.ends_with("-latest");
+                let new_is_latest = model.id.ends_with("-latest");
+                if existing_is_latest && !new_is_latest {
+                    true
+                } else if !existing_is_latest && new_is_latest {
+                    false
+                } else {
+                    existing.created.unwrap_or(0) >= model.created.unwrap_or(0)
+                }
+            });
+            if !dominated {
+                best.insert(base, model);
+            }
+        }
+
+        assert_eq!(best.len(), 1);
+        assert_eq!(best["mistral-large"].id, "mistral-large-latest");
     }
 }

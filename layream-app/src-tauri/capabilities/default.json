@@ -13,6 +13,7 @@
     "fs:scope-appcache",
     "fs:scope-applocaldata",
     "shell:allow-open",
+    "opener:default",
     "dialog:default",
     "deep-link:default",
     "log:default"

@@ -102,8 +102,9 @@
     "gemini-embedding-001",
   ];
 
-  // from risu-gca.js, gemini-3.1-pro removed (user confirmed non-existent)
+  // Source: risu-gca.js mA array (GCA plugin v0.2.2)
   const GCA_MODELS = [
+    "gemini-3.1-pro",
     "gemini-3.1-pro-preview",
     "gemini-3.1-flash-lite-preview",
     "gemini-3-pro-preview",
@@ -291,37 +292,14 @@
     } catch (e) { console.error("Settings import failed:", e); }
   }
 
-  /** ID substrings that indicate non-chat models. */
-  const MISTRAL_EXCLUDE_PATTERNS = ["embed", "moderation", "classifier"];
-
-  function isMistralChatModel(model) {
-    // If capabilities field is present, use it for accurate filtering
-    if (model.capabilities && typeof model.capabilities === "object") {
-      return model.capabilities.completion_chat === true;
-    }
-    // Fallback: exclude by ID pattern
-    const idLower = model.id.toLowerCase();
-    return !MISTRAL_EXCLUDE_PATTERNS.some(pat => idLower.includes(pat));
-  }
-
   async function fetchMistralModels() {
     if (!mistralKey) return;
     mistralFetching = true;
     try {
+      // Backend filters to chat-capable models and deduplicates by base name
       const result = await invoke("mistral_list_models", { api_key: mistralKey });
       if (result?.length) {
-        const chatModels = result.filter(isMistralChatModel);
-        // Deduplicate by id, then sort: "latest" suffix first, then by created desc, then alphabetically
-        const unique = [...new Map(chatModels.map(m => [m.id, m])).values()];
-        unique.sort((a, b) => {
-          const aLatest = a.id.endsWith("-latest");
-          const bLatest = b.id.endsWith("-latest");
-          if (aLatest !== bLatest) return aLatest ? -1 : 1;
-          // Prefer newer models (higher created timestamp)
-          if (a.created && b.created && a.created !== b.created) return b.created - a.created;
-          return a.id.localeCompare(b.id);
-        });
-        mistralModels = unique.map(m => m.id);
+        mistralModels = result.map(m => m.id);
       }
     } catch (e) { console.warn("Failed to fetch Mistral models:", e); }
     mistralFetching = false;
@@ -582,7 +560,14 @@
         <label class="label">Model</label>
         <select class="select" bind:value={gcaModel} onchange={scheduleSettingsSave}>
           {#each GCA_MODELS as m}<option value={m}>{m}</option>{/each}
+          {#if gcaModel && !GCA_MODELS.includes(gcaModel)}
+            <option value={gcaModel}>{gcaModel} (custom)</option>
+          {/if}
         </select>
+      </div>
+      <div class="field">
+        <label class="label">Custom Model ID</label>
+        <input class="input" type="text" bind:value={gcaModel} placeholder="e.g. gemini-2.5-pro" onchange={scheduleSettingsSave} />
       </div>
 
       <div class="field">

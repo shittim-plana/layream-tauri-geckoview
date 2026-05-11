@@ -160,12 +160,62 @@ fn gz_compress(data: &[u8]) -> Result<Vec<u8>, LayreamError> {
     Ok(compressed)
 }
 
-/// Parse a .risum module file (rpack-encoded -> gz-compressed -> msgpack) into JSON.
+/// Binary .risum format constants (matches RisuAI module-manager spec).
+const RISUM_MAGIC: u8 = 111;
+const RISUM_VERSION: u8 = 0;
+const _RISUM_ASSET_MARKER: u8 = 1;
+const _RISUM_END_MARKER: u8 = 0;
+
+/// Parse a .risum module file into JSON.
+///
+/// .risum files come in two variants:
+///   1. **Binary container**: `[magic=111][version=0][u32le main_len][rpack(json)]`
+///      followed by optional asset chunks `[1][u32le len][rpack(data)]...` and `[0]` terminator.
+///      The main payload after rpack-decode is UTF-8 JSON text of `{ "type": "risuModule", "module": ... }`.
+///   2. **Plain JSON**: directly parseable UTF-8 JSON.
 pub fn parse_risum_data(data: &[u8]) -> Result<serde_json::Value, LayreamError> {
-    let unpacked = rpack::decode(data);
-    let decompressed = gz_decompress(&unpacked)?;
-    let rmpv_val: rmpv::Value = rmp_serde::from_slice(&decompressed)?;
-    Ok(rmpv_to_json(rmpv_val))
+    if data.len() >= 2 && data[0] == RISUM_MAGIC && data[1] == RISUM_VERSION {
+        parse_risum_binary(data)
+    } else {
+        // Attempt plain JSON parse
+        let json: serde_json::Value = serde_json::from_slice(data)?;
+        Ok(json)
+    }
+}
+
+/// Parse the binary .risum container format.
+fn parse_risum_binary(data: &[u8]) -> Result<serde_json::Value, LayreamError> {
+    // Minimum: magic(1) + version(1) + main_len(4) + at least 1 byte payload = 7
+    if data.len() < 7 {
+        return Err(LayreamError::Http("risum binary too short".to_string()));
+    }
+
+    // Skip magic and version (already validated by caller)
+    let mut pos: usize = 2;
+
+    let main_len = u32::from_le_bytes([
+        data[pos],
+        data[pos + 1],
+        data[pos + 2],
+        data[pos + 3],
+    ]) as usize;
+    pos += 4;
+
+    if pos + main_len > data.len() {
+        return Err(LayreamError::Http(format!(
+            "risum main chunk length {} exceeds data size {}",
+            main_len,
+            data.len() - pos
+        )));
+    }
+
+    let main_compressed = &data[pos..pos + main_len];
+    let main_decoded = rpack::decode(main_compressed);
+    let json: serde_json::Value = serde_json::from_slice(&main_decoded)?;
+
+    // We intentionally skip asset chunks here -- parse_risum_data returns the
+    // module JSON only; asset extraction is handled separately by the caller.
+    Ok(json)
 }
 
 #[cfg(test)]

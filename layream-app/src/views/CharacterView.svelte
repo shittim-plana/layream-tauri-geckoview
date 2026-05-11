@@ -82,7 +82,7 @@
         character = result;
         characterName = name;
         error = "";
-        invoke("cmd_save_current_character", { character: { card: result.card, characterName: name, assetCount: result.assetCount, hasModule: result.hasModule } }).catch(e => console.warn("Auto-save:", e));
+        invoke("cmd_save_current_character", { character: { card: result.card, characterName: name, assetList: result.assetList, hasModule: result.hasModule } }).catch(e => console.warn("Auto-save:", e));
       } else {
         error = "load_character returned null/undefined";
       }
@@ -133,7 +133,7 @@
   async function saveCharacter() {
     if (!character) return;
     try {
-      await invoke("cmd_save_current_character", { character: { card: character.card, characterName, assetCount: character.assetCount, hasModule: character.hasModule } });
+      await invoke("cmd_save_current_character", { character: { card: character.card, characterName, assetList: character.assetList, hasModule: character.hasModule } });
       status = "Saved!";
       setTimeout(() => { if (status === "Saved!") status = ""; }, 2000);
     } catch (e) {
@@ -198,8 +198,8 @@
       {#if data?.creator}
         <div class="card-body" style="padding: 8px 14px;">
           <span style="font-size: 12px; color: var(--fg2);">by {data.creator}</span>
-          {#if character.assetCount > 0}
-            <span style="font-size: 12px; color: var(--fg3); margin-left: 12px;">{character.assetCount} assets</span>
+          {#if character.assetList?.length > 0}
+            <span style="font-size: 12px; color: var(--fg3); margin-left: 12px;">{character.assetList.length} assets</span>
           {/if}
           {#if character.hasModule}
             <span style="font-size: 12px; color: var(--accent); margin-left: 12px;">.risum module</span>
@@ -385,7 +385,7 @@
       }))}
       <div class="card">
         <div class="card-header">
-          <span class="card-title">Assets ({character.assetCount})</span>
+          <span class="card-title">Assets ({character.assetList?.length ?? 0})</span>
         </div>
         <div class="card-body">
           {#if character.assetList?.length > 0}

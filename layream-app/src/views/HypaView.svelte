@@ -148,14 +148,21 @@
         reader.readAsText(file);
       });
       const data = JSON.parse(text);
-      const items = data?.summaries ?? (Array.isArray(data) ? data : null);
+      // Try extraction in order of specificity:
+      // 1. { summaries: [...] } — Layream export / RisuAI SerializableHypaV3Data
+      // 2. bare array [...]
+      // 3. { hypaV3Data: { summaries: [...] } } — RisuAI chat export wrapper
+      const items = data?.summaries
+        ?? (Array.isArray(data) ? data : null)
+        ?? data?.hypaV3Data?.summaries
+        ?? null;
       if (items && Array.isArray(items)) {
         hypaSummaries = items;
         hypaMemoryCount = hypaSummaries.length;
         await saveHypa();
         hypaImportStatus = `imported ${hypaSummaries.length} summaries`;
       } else {
-        hypaImportStatus = `invalid format — expected { summaries: [...] } or [...]`;
+        hypaImportStatus = `invalid format — expected { summaries: [...] }, [...], or { hypaV3Data: { summaries: [...] } }`;
       }
     } catch (e) { hypaImportStatus = `import error: ${e}`; }
     setTimeout(() => { hypaImportStatus = ""; }, STATUS_CLEAR_MS);

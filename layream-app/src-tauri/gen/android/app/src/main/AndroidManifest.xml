@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+
+    <!-- AndroidTV support -->
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+
+    <!-- Required for queryIntentActivities to return browser apps on Android 11+ (API 30+) -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="http" />
+        </intent>
+        <!-- For storage permission settings intent -->
+        <intent>
+            <action android:name="android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION" />
+        </intent>
+    </queries>
+
+    <application
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.layream_app"
+        android:usesCleartextTraffic="${usesCleartextTraffic}">
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:launchMode="singleTask"
+            android:label="@string/main_activity_title"
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <!-- AndroidTV support -->
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.googleusercontent.apps.317210024447-v4g6e0e1q5933vogajp0651vhkrgal06" android:path="/oauth2callback" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.googleusercontent.apps.681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j" android:path="/oauth2callback" />
+            </intent-filter>
+            <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
+            <intent-filter android:autoVerify="true" >
+                <action android:name="android.intent.action.VIEW" />
+                <!-- ChromeOS ARC++ uses a different action for deep links -->
+                <action android:name="org.chromium.arc.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:scheme="http" />
+                <data android:host="oauth" />
+                
+                
+                <data android:pathPrefix="/callback" />
+                
+            </intent-filter>
+            <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
+        </activity>
+
+        <service
+            android:name=".ApiStreamingService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <provider
+          android:name="androidx.core.content.FileProvider"
+          android:authorities="${applicationId}.fileprovider"
+          android:exported="false"
+          android:grantUriPermissions="true">
+          <meta-data
+            android:name="android.support.FILE_PROVIDER_PATHS"
+            android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>

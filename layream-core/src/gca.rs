@@ -2,6 +2,7 @@ use futures::StreamExt;
 use serde_json::Value;
 
 use crate::error::LayreamError;
+use crate::retry::{self, CancelToken};
 use crate::vertex_api::{GenerateRequest, StreamChunk};
 
 const GCA_BASE: &str = "https://cloudcode-pa.googleapis.com/v1internal";
@@ -9,7 +10,9 @@ pub const GCA_OAUTH_CLIENT_ID: &str = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib
 pub const GCA_OAUTH_CLIENT_SECRET: &str = "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";
 pub const GCA_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile";
 
+// Source: risu-gca.js mA array (GCA plugin v0.2.2)
 pub const GCA_MODELS: &[&str] = &[
+    "gemini-3.1-pro",
     "gemini-3.1-pro-preview",
     "gemini-3.1-flash-lite-preview",
     "gemini-3-pro-preview",
@@ -32,17 +35,19 @@ pub async fn stream_generate(
     model: &str,
     request: &GenerateRequest,
     on_chunk: impl Fn(&str),
+    cancel: Option<CancelToken>,
 ) -> Result<String, LayreamError> {
     let url = build_endpoint(model);
+    let auth = format!("Bearer {}", access_token);
 
-    let resp = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", access_token))
-        .header("x-goog-api-client", "google-cloud-intellij")
-        .json(request)
-        .send()
-        .await
-        .map_err(|e| LayreamError::Http(e.to_string()))?;
+    let resp = retry::retry_request(&cancel, || {
+        let req = client
+            .post(&url)
+            .header("Authorization", &auth)
+            .header("x-goog-api-client", "google-cloud-intellij")
+            .json(request);
+        async { req.send().await.map_err(|e| LayreamError::Http(e.to_string())) }
+    }).await?;
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
@@ -55,6 +60,9 @@ pub async fn stream_generate(
     let mut buffer = String::new();
 
     while let Some(chunk) = stream.next().await {
+        if retry::is_cancelled(&cancel) {
+            return Err(LayreamError::Http("cancelled".to_string()));
+        }
         let bytes = chunk.map_err(|e| LayreamError::Http(e.to_string()))?;
         buffer.push_str(&String::from_utf8_lossy(&bytes));
 
@@ -224,5 +232,6 @@ mod tests {
         assert!(!GCA_MODELS.is_empty());
         assert!(GCA_MODELS.contains(&"gemini-2.5-flash"));
         assert!(GCA_MODELS.contains(&"gemini-3-pro-preview"));
+        assert!(GCA_MODELS.contains(&"gemini-3.1-pro"));
     }
 }

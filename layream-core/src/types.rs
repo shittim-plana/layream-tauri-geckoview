@@ -513,6 +513,8 @@ pub struct OobaChatCompletionParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BotPreset {
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default, rename = "apiType")]

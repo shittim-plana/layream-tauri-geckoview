@@ -1,4 +1,5 @@
 <script>
+  import { onMount } from "svelte";
   import { invoke } from "../lib/tauri.js";
   import FileImport from "../components/FileImport.svelte";
 
@@ -8,12 +9,63 @@
   let error = $state("");
   let subTab = $state("info");
   let moduleInfo = $state("");
+  let moduleParsed = $state(null);
+  let moduleError = $state("");
+  let moduleLoading = $state(false);
 
-  async function handleModuleFile(name, data) {
-    moduleInfo = `${name} (${(data.length / 1024).toFixed(1)} KB)`;
+  let previewAsset = $state(null);
+  let previewData = $state("");
+  let previewLoading = $state(false);
+
+  // Greeting switcher: -1 selects data.first_mes; 0..N-1 selects
+  // data.alternate_greetings[i]. Reset on character (re)load via $effect.
+  let greetingIndex = $state(-1);
+
+  const IMG_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
+  function isImage(name) {
+    return IMG_EXTS.some(ext => name.toLowerCase().endsWith(ext));
+  }
+  function mimeType(name) {
+    const ext = name.split(".").pop()?.toLowerCase();
+    if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+    if (ext === "gif") return "image/gif";
+    if (ext === "webp") return "image/webp";
+    return "image/png";
   }
 
-  async function handleFile(name, data) {
+  async function loadAssetPreview(assetName) {
+    if (previewAsset === assetName) { previewAsset = null; previewData = ""; return; }
+    previewAsset = assetName;
+    previewLoading = true;
+    previewData = "";
+    try {
+      const b64 = await invoke("get_asset_data", { asset_name: assetName });
+      previewData = `data:${mimeType(assetName)};base64,${b64}`;
+    } catch (e) {
+      previewData = "";
+      previewAsset = null;
+      error = `Asset load failed: ${e}`;
+    }
+    previewLoading = false;
+  }
+
+  async function handleModuleFile(name, data, tempName) {
+    moduleInfo = `${name} (${(data.length / 1024).toFixed(1)} KB)`;
+    moduleError = "";
+    moduleParsed = null;
+    moduleLoading = true;
+    try {
+      const result = tempName
+        ? await invoke("parse_risum_from_path", { temp_name: tempName })
+        : await invoke("parse_risum", { data });
+      moduleParsed = result;
+    } catch (e) {
+      moduleError = `parse_risum error: ${String(e)}`;
+    }
+    moduleLoading = false;
+  }
+
+  async function handleFile(name, data, tempName) {
     const CHAR_EXTS = [".charx", ".png", ".jpeg", ".jpg", ".json"];
     const ext = "." + name.split(".").pop()?.toLowerCase();
     if (!CHAR_EXTS.includes(ext)) {
@@ -23,11 +75,14 @@
     loading = true;
     error = "";
     try {
-      const result = await invoke("load_character", { name, data });
+      const result = tempName
+        ? await invoke("load_character_from_path", { name, temp_name: tempName })
+        : await invoke("load_character", { name, data });
       if (result) {
         character = result;
         characterName = name;
         error = "";
+        invoke("cmd_save_current_character", { character: { card: result.card, characterName: name, assetList: result.assetList, hasModule: result.hasModule } }).catch(e => console.warn("Auto-save:", e));
       } else {
         error = "load_character returned null/undefined";
       }
@@ -42,17 +97,77 @@
     characterName = "";
     error = "";
     subTab = "info";
+    moduleParsed = null;
+    moduleInfo = "";
+    moduleError = "";
+    greetingIndex = -1;
+  }
+
+  // Total greeting count: first_mes counts as 1 if present, plus each
+  // alternate_greetings entry. Used to bound the prev/next navigation.
+  function greetingCount(d) {
+    const altLen = d?.alternate_greetings?.length || 0;
+    const hasFirst = typeof d?.first_mes === "string" && d.first_mes.length > 0;
+    return (hasFirst ? 1 : 0) + altLen;
+  }
+
+  function getGreeting(d, idx) {
+    if (idx < 0) return d?.first_mes ?? "";
+    return d?.alternate_greetings?.[idx] ?? "";
+  }
+
+  function setGreeting(d, idx, value) {
+    if (idx < 0) {
+      d.first_mes = value;
+    } else if (Array.isArray(d?.alternate_greetings)) {
+      d.alternate_greetings[idx] = value;
+    }
   }
 
   function cardData() {
     return character?.card?.data || character?.card || null;
   }
+
+  let status = $state("");
+
+  async function saveCharacter() {
+    if (!character) return;
+    try {
+      await invoke("cmd_save_current_character", { character: { card: character.card, characterName, assetList: character.assetList, hasModule: character.hasModule } });
+      status = "Saved!";
+      setTimeout(() => { if (status === "Saved!") status = ""; }, 2000);
+    } catch (e) {
+      error = `Save failed: ${e}`;
+    }
+  }
+
+  function formatBytes(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  onMount(async () => {
+    try {
+      const saved = await invoke("cmd_load_current_character");
+      if (saved && typeof saved === "object" && saved.card) {
+        character = saved;
+        characterName = saved.characterName || "Saved Character";
+      }
+    } catch (e) { console.warn("Load character failed:", e); }
+  });
 </script>
 
 <div>
   {#if error}
     <div class="card" style="border-color: var(--red); color: var(--red);">
       <div class="card-body">{error}</div>
+    </div>
+  {/if}
+
+  {#if status}
+    <div class="card" style="border-color: var(--accent); color: var(--accent);">
+      <div class="card-body">{status}</div>
     </div>
   {/if}
 
@@ -75,13 +190,16 @@
     <div class="card">
       <div class="card-header">
         <span class="card-title">{data?.name || characterName}</span>
-        <button class="btn btn-sm btn-danger" onclick={closeCharacter}>Close</button>
+        <div style="display: flex; gap: 6px;">
+          <button class="btn btn-sm btn-primary" onclick={saveCharacter}>Save</button>
+          <button class="btn btn-sm btn-danger" onclick={closeCharacter}>Close</button>
+        </div>
       </div>
       {#if data?.creator}
         <div class="card-body" style="padding: 8px 14px;">
           <span style="font-size: 12px; color: var(--fg2);">by {data.creator}</span>
-          {#if character.assetCount > 0}
-            <span style="font-size: 12px; color: var(--fg3); margin-left: 12px;">{character.assetCount} assets</span>
+          {#if character.assetList?.length > 0}
+            <span style="font-size: 12px; color: var(--fg3); margin-left: 12px;">{character.assetList.length} assets</span>
           {/if}
           {#if character.hasModule}
             <span style="font-size: 12px; color: var(--accent); margin-left: 12px;">.risum module</span>
@@ -127,11 +245,38 @@
         </div>
       {/if}
 
-      {#if data.first_mes}
+      {@const greetTotal = greetingCount(data)}
+      {#if greetTotal > 0}
+        {@const altLen = data.alternate_greetings?.length || 0}
+        {@const hasFirst = typeof data.first_mes === "string" && data.first_mes.length > 0}
+        {@const minIdx = hasFirst ? -1 : 0}
+        {@const safeIdx = Math.max(minIdx, Math.min(greetingIndex, altLen - 1))}
+        {@const label = safeIdx < 0 ? "First Message" : `Alternate #${safeIdx + 1}`}
+        {@const position = safeIdx < 0 ? 1 : (hasFirst ? safeIdx + 2 : safeIdx + 1)}
         <div class="card">
-          <div class="card-header"><span class="card-title">First Message</span></div>
+          <div class="card-header">
+            <span class="card-title">{label}</span>
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <button
+                class="btn btn-sm btn-secondary"
+                disabled={safeIdx <= minIdx}
+                onclick={() => greetingIndex = safeIdx - 1}
+              >‹</button>
+              <span style="font-size: 12px; color: var(--fg3);">{position}/{greetTotal}</span>
+              <button
+                class="btn btn-sm btn-secondary"
+                disabled={safeIdx >= altLen - 1}
+                onclick={() => greetingIndex = safeIdx + 1}
+              >›</button>
+            </div>
+          </div>
           <div class="card-body">
-            <textarea class="textarea" rows="4" bind:value={data.first_mes}></textarea>
+            <textarea
+              class="textarea"
+              rows="4"
+              value={getGreeting(data, safeIdx)}
+              oninput={(e) => setGreeting(data, safeIdx, e.target.value)}
+            ></textarea>
           </div>
         </div>
       {/if}
@@ -150,6 +295,38 @@
           <div class="card-header"><span class="card-title">System Prompt</span></div>
           <div class="card-body">
             <textarea class="textarea" rows="3" bind:value={data.system_prompt}></textarea>
+          </div>
+        </div>
+      {/if}
+
+      <!-- Regex Scripts -->
+      {@const regexScripts = data.customScripts || data.extensions?.risuai?.customScripts || []}
+      {#if regexScripts.length > 0}
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Regex Scripts ({regexScripts.length})</span>
+          </div>
+          <div class="card-body">
+            {#each regexScripts as script, i}
+              <div style="padding: 10px 0; {i > 0 ? 'border-top: 1px solid var(--bg4);' : ''}">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                  <span style="color: var(--accent); font-size: 13px; font-weight: 500;">
+                    {script.comment || `Script #${i + 1}`}
+                  </span>
+                  <span style="font-size: 11px; padding: 2px 6px; background: var(--bg4); border-radius: var(--radius-sm); color: var(--fg3);">
+                    {script.type || "unknown"}
+                  </span>
+                </div>
+                <div class="field">
+                  <label class="label">Pattern (in)</label>
+                  <input class="input" type="text" readonly value={script.in || ""} />
+                </div>
+                <div class="field">
+                  <label class="label">Replacement (out)</label>
+                  <input class="input" type="text" readonly value={script.out || ""} />
+                </div>
+              </div>
+            {/each}
           </div>
         </div>
       {/if}
@@ -201,13 +378,40 @@
 
     <!-- Assets Tab -->
     {#if subTab === "assets"}
+      {@const additionalAssets = data?.extensions?.risuai?.additionalAssets || data?.additionalAssets || []}
+      {@const assetNameMap = Object.fromEntries(additionalAssets.map(a => {
+        const path = (a[1] || "").replace(/^__asset:/, "");
+        return [path, a[0]];
+      }))}
       <div class="card">
-        <div class="card-header"><span class="card-title">Assets</span></div>
+        <div class="card-header">
+          <span class="card-title">Assets ({character.assetList?.length ?? 0})</span>
+        </div>
         <div class="card-body">
-          {#if character.assetCount > 0}
-            <p style="color: var(--fg2);">{character.assetCount} assets embedded in character file.</p>
+          {#if character.assetList?.length > 0}
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              {#each character.assetList as asset}
+                {@const displayName = assetNameMap[asset.name] || asset.name.split('/').pop()}
+                <div
+                  style="padding: 6px 8px; background: var(--bg3); border-radius: var(--radius-sm); {isImage(asset.name) ? 'cursor: pointer;' : ''}"
+                  onclick={() => isImage(asset.name) && loadAssetPreview(asset.name)}
+                >
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 13px; color: {isImage(asset.name) ? 'var(--accent)' : 'var(--fg1)'}; word-break: break-all;">{displayName}</span>
+                    <span style="font-size: 12px; color: var(--fg3); white-space: nowrap; margin-left: 12px;">{formatBytes(asset.size)}</span>
+                  </div>
+                  {#if previewAsset === asset.name}
+                    {#if previewLoading}
+                      <div style="padding: 12px; text-align: center;"><div class="spinner"></div></div>
+                    {:else if previewData}
+                      <img src={previewData} alt={asset.name} style="max-width: 100%; margin-top: 8px; border-radius: var(--radius-sm);" />
+                    {/if}
+                  {/if}
+                </div>
+              {/each}
+            </div>
           {:else}
-            <p style="color: var(--fg3);">No assets in this character file.</p>
+            <p style="color: var(--fg3); text-align: center;">No assets in this character file.</p>
           {/if}
         </div>
       </div>
@@ -232,14 +436,141 @@
             label=".risum 모듈 불러오기"
             extensions=".risum"
             onfile={handleModuleFile}
+            disabled={moduleLoading}
           />
-          {#if moduleInfo}
+          {#if moduleLoading}
+            <div class="spinner" style="margin-top: 8px;"></div>
+          {/if}
+          {#if moduleError}
+            <div style="margin-top: 8px; padding: 8px; background: var(--bg3); border-radius: var(--radius-sm); font-size: 12px; color: var(--red);">
+              {moduleError}
+            </div>
+          {/if}
+          {#if moduleInfo && !moduleParsed && !moduleError && !moduleLoading}
             <div style="margin-top: 8px; padding: 8px; background: var(--bg3); border-radius: var(--radius-sm); font-size: 12px; color: var(--fg2);">
               Module loaded: {moduleInfo}
             </div>
           {/if}
         </div>
       </div>
+
+      {#if moduleParsed}
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">{moduleParsed.name || "Unnamed Module"}</span>
+          </div>
+          <div class="card-body">
+            {#if moduleParsed.description}
+              <div class="field">
+                <label class="label">Description</label>
+                <p style="font-size: 13px; color: var(--fg2);">{moduleParsed.description}</p>
+              </div>
+            {/if}
+            {#if moduleParsed.id}
+              <div class="field">
+                <label class="label">ID</label>
+                <p style="font-size: 12px; color: var(--fg3); font-family: monospace;">{moduleParsed.id}</p>
+              </div>
+            {/if}
+            {#if moduleParsed.namespace}
+              <div class="field">
+                <label class="label">Namespace</label>
+                <p style="font-size: 12px; color: var(--fg3);">{moduleParsed.namespace}</p>
+              </div>
+            {/if}
+            <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px;">
+              {#if moduleParsed.lorebook?.length}
+                <span style="font-size: 12px; padding: 2px 8px; background: var(--bg4); border-radius: var(--radius-sm); color: var(--fg2);">
+                  {moduleParsed.lorebook.length} lorebook entries
+                </span>
+              {/if}
+              {#if moduleParsed.regex?.length}
+                <span style="font-size: 12px; padding: 2px 8px; background: var(--bg4); border-radius: var(--radius-sm); color: var(--fg2);">
+                  {moduleParsed.regex.length} regex scripts
+                </span>
+              {/if}
+              {#if moduleParsed.trigger?.length}
+                <span style="font-size: 12px; padding: 2px 8px; background: var(--bg4); border-radius: var(--radius-sm); color: var(--fg2);">
+                  {moduleParsed.trigger.length} trigger scripts
+                </span>
+              {/if}
+              {#if moduleParsed.cjs}
+                <span style="font-size: 12px; padding: 2px 8px; background: var(--bg4); border-radius: var(--radius-sm); color: var(--fg2);">
+                  Custom JS
+                </span>
+              {/if}
+              {#if moduleParsed.assets?.length}
+                <span style="font-size: 12px; padding: 2px 8px; background: var(--bg4); border-radius: var(--radius-sm); color: var(--fg2);">
+                  {moduleParsed.assets.length} assets
+                </span>
+              {/if}
+            </div>
+          </div>
+        </div>
+
+        <!-- Module Regex Scripts -->
+        {#if moduleParsed.regex?.length > 0}
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Module Regex ({moduleParsed.regex.length})</span>
+            </div>
+            <div class="card-body">
+              {#each moduleParsed.regex as script, i}
+                <div style="padding: 10px 0; {i > 0 ? 'border-top: 1px solid var(--bg4);' : ''}">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <span style="color: var(--accent); font-size: 13px; font-weight: 500;">
+                      {script.comment || `Script #${i + 1}`}
+                    </span>
+                    <span style="font-size: 11px; padding: 2px 6px; background: var(--bg4); border-radius: var(--radius-sm); color: var(--fg3);">
+                      {script.type || "unknown"}
+                    </span>
+                  </div>
+                  <div class="field">
+                    <label class="label">Pattern (in)</label>
+                    <input class="input" type="text" readonly value={script.in || ""} />
+                  </div>
+                  <div class="field">
+                    <label class="label">Replacement (out)</label>
+                    <input class="input" type="text" readonly value={script.out || ""} />
+                  </div>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        <!-- Module Lorebook -->
+        {#if moduleParsed.lorebook?.length > 0}
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Module Lorebook ({moduleParsed.lorebook.length})</span>
+            </div>
+            <div class="card-body">
+              {#each moduleParsed.lorebook as entry, i}
+                <div style="padding: 10px 0; {i > 0 ? 'border-top: 1px solid var(--bg4);' : ''}">
+                  <div style="margin-bottom: 4px;">
+                    <span style="color: var(--accent); font-size: 13px; font-weight: 500;">
+                      {entry.comment || entry.key || `Entry #${i + 1}`}
+                    </span>
+                  </div>
+                  {#if entry.key}
+                    <div class="field">
+                      <label class="label">Key</label>
+                      <input class="input" type="text" readonly value={entry.key} />
+                    </div>
+                  {/if}
+                  {#if entry.content}
+                    <div class="field">
+                      <label class="label">Content</label>
+                      <textarea class="textarea" rows="2" readonly value={entry.content}></textarea>
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      {/if}
     {/if}
   {/if}
 </div>

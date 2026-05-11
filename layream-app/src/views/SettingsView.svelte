@@ -2,8 +2,14 @@
   import { invoke } from "../lib/tauri.js";
   import { onMount } from "svelte";
 
-  let debugLog = $state("");
-  function dbg(msg) { debugLog = msg; }
+  let debugLines = $state([]);
+  let debugLog = $derived(debugLines.join("\n"));
+  function dbg(msg) { debugLines = [...debugLines.slice(-9), msg]; }
+
+  // --- User Persona ---
+  // userName is referenced as {{user}} in CBS templates and used as a fallback
+  // when a character card does not specify a persona name.
+  let userName = $state("User");
 
   // --- Provider Assignment ---
   let chatProvider = $state("vertex");
@@ -82,12 +88,13 @@
   ];
 
   const VERTEX_DEFAULT_MODELS = [
+    "gemini-3.1-pro-preview",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3-pro-preview",
+    "gemini-3-flash-preview",
     "gemini-2.5-pro",
     "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-1.5-pro",
-    "gemini-1.5-flash",
+    "gemini-2.5-flash-lite",
   ];
 
   const VERTEX_EMBEDDING_MODELS = [
@@ -95,8 +102,9 @@
     "gemini-embedding-001",
   ];
 
-  // from risu-gca.js, gemini-3.1-pro removed (user confirmed non-existent)
+  // Source: risu-gca.js mA array (GCA plugin v0.2.2)
   const GCA_MODELS = [
+    "gemini-3.1-pro",
     "gemini-3.1-pro-preview",
     "gemini-3.1-flash-lite-preview",
     "gemini-3-pro-preview",
@@ -132,14 +140,37 @@
     } catch (e) { vertexStatus = { connected: false, error: String(e) }; }
   }
 
-  function openExternal(url) {
-    dbg(`openExternal: ${url?.slice(0, 80)}...`);
-    const a = document.createElement("a");
-    a.href = url;
-    a.target = "_blank";
-    a.rel = "noopener";
-    a.click();
-    dbg("opened via anchor _blank");
+  let browserList = $state([]);
+  let browserPickerUrl = $state("");
+  let showBrowserPicker = $state(false);
+
+  async function openWithBrowserPicker(url) {
+    dbg(`openWithBrowserPicker: ${url?.slice(0, 80)}...`);
+    try {
+      const result = await invoke("list_browsers");
+      const browsers = result?.browsers || [];
+      dbg(`browsers: ${browsers.length} found`);
+      if (browsers.length > 1) {
+        browserList = browsers;
+        browserPickerUrl = url;
+        showBrowserPicker = true;
+      } else if (browsers.length === 1) {
+        await invoke("open_in_browser", { url, package: browsers[0].package });
+      } else {
+        await invoke("open_custom_tab", { url });
+      }
+    } catch (e) {
+      dbg(`openWithBrowserPicker failed: ${e}`);
+      try { await invoke("open_custom_tab", { url }); } catch (_) {}
+    }
+  }
+
+  async function pickBrowser(pkg) {
+    showBrowserPicker = false;
+    dbg(`pickBrowser: ${pkg}`);
+    try {
+      await invoke("open_in_browser", { url: browserPickerUrl, package: pkg });
+    } catch (e) { dbg(`open_in_browser failed: ${e}`); }
   }
 
   async function startVertexAuth() {
@@ -147,9 +178,28 @@
     try {
       const url = await invoke("vertex_oauth_start");
       dbg(`got url type=${typeof url}, val=${String(url)?.slice(0, 100)}`);
-      if (url) await openExternal(url);
-      else dbg("url is falsy!");
+      if (url) {
+        await openWithBrowserPicker(url);
+      } else {
+        dbg("url is falsy!");
+      }
     } catch (e) { dbg(`Vertex auth CATCH: ${e}`); }
+  }
+
+  // Listen for auth completion events emitted by App.svelte deep link handler
+  async function listenAuthEvents() {
+    window.addEventListener("oauth-complete", (e) => {
+      dbg(`OAuth complete: ${e.detail}`);
+      if (e.detail === "vertex") checkVertexStatus();
+      if (e.detail === "gca") { checkGcaStatus(); loadGcaProfile(); }
+    });
+    try {
+      const { listen } = await import("@tauri-apps/api/event");
+      await listen("gca-auth-complete", (event) => {
+        dbg(`GCA loopback result: ${event.payload}`);
+        if (event.payload === "ok") { checkGcaStatus(); loadGcaProfile(); }
+      });
+    } catch (e) { dbg(`event listen failed: ${e}`); }
   }
 
   async function disconnectVertex() {
@@ -159,10 +209,19 @@
 
   async function fetchVertexModels() {
     vertexFetching = true;
+    dbg(`Fetching models for region: ${vertexRegion}...`);
     try {
       const result = await invoke("vertex_list_models", { region: vertexRegion });
-      if (result?.length) vertexFetchedModels = result;
-    } catch (e) { console.warn("Failed to fetch Vertex models:", e); }
+      dbg(`Fetch result: ${JSON.stringify(result)?.slice(0, 200)}`);
+      if (Array.isArray(result) && result.length) {
+        vertexFetchedModels = result;
+        dbg(`Fetched ${result.length} models`);
+      } else {
+        dbg(`No models returned`);
+      }
+    } catch (e) {
+      dbg(`Fetch models failed: ${e}`);
+    }
     vertexFetching = false;
   }
 
@@ -178,18 +237,7 @@
       const url = await invoke("gca_oauth_start");
       dbg(`got url: ${url?.slice(0, 80)}...`);
       if (url) {
-        await openExternal(url);
-        try {
-          const { listen } = await import("@tauri-apps/api/event");
-          const unlisten = await listen("gca-auth-complete", (event) => {
-            dbg(`GCA auth result: ${event.payload}`);
-            if (event.payload === "ok") {
-              checkGcaStatus();
-              loadGcaProfile();
-            }
-            unlisten();
-          });
-        } catch (e) { dbg(`event listen failed: ${e}`); }
+        await openWithBrowserPicker(url);
       }
     } catch (e) { dbg(`GCA auth error: ${e}`); }
   }
@@ -248,8 +296,11 @@
     if (!mistralKey) return;
     mistralFetching = true;
     try {
+      // Backend filters to chat-capable models and deduplicates by base name
       const result = await invoke("mistral_list_models", { api_key: mistralKey });
-      if (result?.length) mistralModels = result.map(m => m.id).sort();
+      if (result?.length) {
+        mistralModels = result.map(m => m.id);
+      }
     } catch (e) { console.warn("Failed to fetch Mistral models:", e); }
     mistralFetching = false;
   }
@@ -279,6 +330,7 @@
 
   function collectSettings() {
     return {
+      userName,
       chatProvider, summaryProvider, embeddingProvider,
       vertexProjectId, vertexRegion, vertexModel, vertexEmbeddingModel, vertexConfig,
       gcaModel, gcaConfig,
@@ -289,6 +341,7 @@
 
   function applySettings(s) {
     if (!s || typeof s !== "object") return;
+    if (typeof s.userName === "string" && s.userName.length > 0) userName = s.userName;
     if (s.chatProvider !== undefined) chatProvider = s.chatProvider;
     if (s.summaryProvider !== undefined) summaryProvider = s.summaryProvider;
     if (s.embeddingProvider !== undefined) embeddingProvider = s.embeddingProvider;
@@ -316,6 +369,7 @@
     if (gcaStatus?.connected && !gcaStatus?.expired) {
       loadGcaProfile();
     }
+    listenAuthEvents();
   });
 
   function statusText(status) {
@@ -334,6 +388,23 @@
 </script>
 
 <div>
+  <!-- User Persona -->
+  <div class="card">
+    <div class="card-header"><span class="card-title">User Persona</span></div>
+    <div class="card-body">
+      <div class="field">
+        <label class="label">Display name (used as &#123;&#123;user&#125;&#125; in CBS)</label>
+        <input
+          class="input"
+          type="text"
+          bind:value={userName}
+          oninput={scheduleSettingsSave}
+          placeholder="User"
+        />
+      </div>
+    </div>
+  </div>
+
   <!-- Provider Assignment -->
   <div class="card">
     <div class="card-header"><span class="card-title">Provider Assignment</span></div>
@@ -402,13 +473,6 @@
             {vertexFetching ? "..." : "Fetch"}
           </button>
         </div>
-      </div>
-
-      <div class="field">
-        <label class="label">Embedding Model</label>
-        <select class="select" bind:value={vertexEmbeddingModel} onchange={scheduleSettingsSave}>
-          {#each VERTEX_EMBEDDING_MODELS as m}<option value={m}>{m}</option>{/each}
-        </select>
       </div>
 
       <div class="field">
@@ -496,7 +560,14 @@
         <label class="label">Model</label>
         <select class="select" bind:value={gcaModel} onchange={scheduleSettingsSave}>
           {#each GCA_MODELS as m}<option value={m}>{m}</option>{/each}
+          {#if gcaModel && !GCA_MODELS.includes(gcaModel)}
+            <option value={gcaModel}>{gcaModel} (custom)</option>
+          {/if}
         </select>
+      </div>
+      <div class="field">
+        <label class="label">Custom Model ID</label>
+        <input class="input" type="text" bind:value={gcaModel} placeholder="e.g. gemini-2.5-pro" onchange={scheduleSettingsSave} />
       </div>
 
       <div class="field">
@@ -638,19 +709,30 @@
     </div>
   </div>
 
-  <!-- Voyage AI -->
+  <!-- Embedding -->
   <div class="card">
-    <div class="card-header"><span class="card-title">Voyage AI (Embeddings)</span></div>
+    <div class="card-header"><span class="card-title">Embedding</span></div>
     <div class="card-body">
-      <div class="field">
-        <label class="label">API Key</label>
-        <input class="input" type="password" bind:value={voyageKey} placeholder="pa-..." onchange={scheduleSettingsSave} />
-      </div>
-      <div class="field">
-        <label class="label">Model</label>
-        <input class="input" type="text" bind:value={voyageModel} onchange={scheduleSettingsSave} />
-      </div>
-      <p style="font-size: 11px; color: var(--fg3); margin-top: 4px;">Used for HyPA v3 long-term memory</p>
+      <p style="font-size: 12px; color: var(--fg2); margin-bottom: 12px;">HyPA v3 장기 기억에 사용되는 임베딩 설정</p>
+
+      {#if embeddingProvider === "vertex"}
+        <div class="field">
+          <label class="label">Vertex Embedding Model</label>
+          <select class="select" bind:value={vertexEmbeddingModel} onchange={scheduleSettingsSave}>
+            {#each VERTEX_EMBEDDING_MODELS as m}<option value={m}>{m}</option>{/each}
+          </select>
+        </div>
+        <p style="font-size: 11px; color: var(--fg3);">Vertex AI OAuth 연결 필요</p>
+      {:else}
+        <div class="field">
+          <label class="label">Voyage API Key</label>
+          <input class="input" type="password" bind:value={voyageKey} placeholder="pa-..." onchange={scheduleSettingsSave} />
+        </div>
+        <div class="field">
+          <label class="label">Voyage Model</label>
+          <input class="input" type="text" bind:value={voyageModel} onchange={scheduleSettingsSave} />
+        </div>
+      {/if}
     </div>
   </div>
 
@@ -683,7 +765,7 @@
   <div class="card" style="border-color: var(--orange);">
     <div class="card-header"><span class="card-title" style="color: var(--orange);">Debug</span></div>
     <div class="card-body">
-      <p style="font-size: 11px; color: var(--orange); word-break: break-all;">{debugLog}</p>
+      <p style="font-size: 11px; color: var(--orange); word-break: break-all; white-space: pre-wrap;">{debugLog}</p>
     </div>
   </div>
   {/if}
@@ -693,8 +775,37 @@
     <div class="card-header"><span class="card-title">About</span></div>
     <div class="card-body">
       <p style="font-size: 13px; color: var(--fg2);">
-        Layream v0.2.1-alpha<br />Prompt editor &amp; AI testing studio<br />Powered by Rust + Tauri 2.0
+        Layream v0.3.0<br />Prompt editor &amp; AI testing studio<br />Powered by Rust + Tauri 2.0
       </p>
     </div>
   </div>
+
+  {#if showBrowserPicker}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      style="position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 24px;"
+      onclick={() => showBrowserPicker = false}
+      ontouchmove={(e) => e.preventDefault()}
+    >
+      <div style="background: var(--bg2); border-radius: var(--radius); width: 100%; max-width: 320px; overflow: hidden;" onclick={(e) => e.stopPropagation()}>
+        <div style="padding: 14px; border-bottom: 1px solid var(--bg4);">
+          <span style="font-size: 14px; font-weight: 600;">브라우저 선택</span>
+        </div>
+        <div style="max-height: 300px; overflow-y: auto; overscroll-behavior: contain;">
+          {#each browserList as b}
+            <button
+              style="width: 100%; padding: 14px; border: none; background: none; color: var(--fg); font-size: 14px; text-align: left; border-bottom: 1px solid var(--bg4); cursor: pointer;"
+              onclick={() => pickBrowser(b.package)}
+            >
+              {b.label}
+            </button>
+          {/each}
+        </div>
+        <button style="width: 100%; padding: 12px; border: none; background: var(--bg3); color: var(--fg3); font-size: 13px; cursor: pointer;" onclick={() => showBrowserPicker = false}>
+          취소
+        </button>
+      </div>
+    </div>
+  {/if}
 </div>

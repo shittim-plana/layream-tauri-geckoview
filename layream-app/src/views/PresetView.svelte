@@ -1,4 +1,5 @@
 <script>
+  import { onMount } from "svelte";
   import { invoke } from "../lib/tauri.js";
   import FileImport from "../components/FileImport.svelte";
   import CBSEditor from "../components/CBSEditor.svelte";
@@ -7,11 +8,17 @@
   let presetName = $state("");
   let loading = $state(false);
   let error = $state("");
+  let status = $state("");
 
   let subTab = $state("prompts");
   let editingIndex = $state(-1);
   let previewText = $state("");
   let showPreview = $state(false);
+
+  // CBS preview context — loaded once on mount; falls back to placeholder
+  // names so previews remain meaningful when no character/settings are saved.
+  let charName = $state("Character");
+  let userName = $state("User");
 
   const TYPE_COLORS = {
     plain: "var(--type-plain)", jailbreak: "var(--type-jailbreak)", cot: "var(--type-cot)",
@@ -30,7 +37,7 @@
   function displayParam(v) { return v === PARAM_SENTINEL ? "" : v; }
   function parseParam(v) { return v === "" || v === undefined ? PARAM_SENTINEL : Number(v); }
 
-  async function handleFile(name, data) {
+  async function handleFile(name, data, tempName) {
     const ext = "." + name.split(".").pop()?.toLowerCase();
     if (!PRESET_EXTS.includes(ext)) {
       error = `지원하지 않는 형식: ${ext} (${PRESET_EXTS.join(", ")} 만 가능)`;
@@ -39,12 +46,15 @@
     loading = true;
     error = "";
     try {
-      const result = await invoke("load_preset", { name, data });
+      const result = tempName
+        ? await invoke("load_preset_from_path", { name, temp_name: tempName })
+        : await invoke("load_preset", { name, data });
       if (result) {
         preset = result;
         presetName = name;
         editingIndex = -1;
         error = "";
+        invoke("cmd_save_current_preset", { preset: result }).catch(e => console.warn("Auto-save:", e));
       } else {
         error = "load_preset returned null/undefined";
       }
@@ -61,13 +71,14 @@
       if (result) {
         const fileName = `${preset.name || "preset"}.${result.ext}`;
         const data = new Uint8Array(result.data);
-        // Try Tauri fs plugin (works on Android where Blob URLs are blocked)
         try {
-          const { writeFile, BaseDirectory } = await import("@tauri-apps/plugin-fs");
-          await writeFile(fileName, data, { baseDir: BaseDirectory.Download });
-          error = `Saved to Downloads/${fileName}`;
-        } catch (fsErr) {
-          // Fallback: Blob URL download (works on desktop)
+          const savedPath = await invoke("save_file_to_downloads", {
+            filename: fileName,
+            data: Array.from(data),
+          });
+          status = `Saved to ${savedPath}`;
+          setTimeout(() => { if (status?.startsWith("Saved to")) status = ""; }, 4000);
+        } catch (saveErr) {
           const blob = new Blob([data]);
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
@@ -87,6 +98,7 @@
     presetName = "";
     editingIndex = -1;
     error = "";
+    status = "";
   }
 
   function getItemText(item) {
@@ -116,17 +128,61 @@
     if (!preset?.promptTemplate?.[editingIndex]) return;
     const text = getItemText(preset.promptTemplate[editingIndex]);
     try {
-      previewText = await invoke("evaluate_cbs", { input: text, char_name: "Character", user_name: "User" });
+      previewText = await invoke("evaluate_cbs", { input: text, char_name: charName, user_name: userName });
     } catch (e) {
       previewText = `Error: ${e}`;
     }
   }
+
+  async function savePreset() {
+    if (!preset) return;
+    try {
+      await invoke("cmd_save_current_preset", { preset });
+      status = "Saved!";
+      setTimeout(() => { if (status === "Saved!") status = ""; }, 2000);
+    } catch (e) {
+      error = `Save failed: ${String(e)}`;
+    }
+  }
+
+  onMount(async () => {
+    try {
+      const saved = await invoke("cmd_load_current_preset");
+      if (saved && typeof saved === "object" && Object.keys(saved).length > 0) {
+        preset = saved;
+        presetName = saved.name || "Saved Preset";
+      }
+    } catch (e) {
+      console.warn("Load preset failed:", e);
+    }
+    try {
+      const ch = await invoke("cmd_load_current_character");
+      const cardName = ch?.card?.data?.name || ch?.card?.name;
+      if (typeof cardName === "string" && cardName.length > 0) charName = cardName;
+    } catch (e) {
+      console.warn("Load character for CBS preview failed:", e);
+    }
+    try {
+      const settings = await invoke("cmd_load_settings");
+      if (typeof settings?.userName === "string" && settings.userName.length > 0) {
+        userName = settings.userName;
+      }
+    } catch (e) {
+      console.warn("Load settings for CBS preview failed:", e);
+    }
+  });
 </script>
 
 <div>
   {#if error}
     <div class="card" style="border-color: var(--red); color: var(--red);">
       <div class="card-body">{error}</div>
+    </div>
+  {/if}
+
+  {#if status}
+    <div class="card" style="border-color: var(--accent); color: var(--accent);">
+      <div class="card-body">{status}</div>
     </div>
   {/if}
 
@@ -149,6 +205,7 @@
       <div class="card-header">
         <span class="card-title">{presetName}</span>
         <div style="display: flex; gap: 6px;">
+          <button class="btn btn-sm btn-primary" onclick={savePreset}>Save</button>
           <button class="btn btn-sm btn-secondary" onclick={() => exportPreset("risup")}>Export .risup</button>
           <button class="btn btn-sm btn-secondary" onclick={() => exportPreset("json")}>Export .json</button>
           <button class="btn btn-sm btn-danger" onclick={closePreset}>Close</button>
@@ -172,8 +229,8 @@
           <button class="btn btn-sm btn-secondary" onclick={() => editingIndex = -1}>← Back</button>
           <span style="font-size: 12px; color: var(--fg3);">{editingIndex + 1}/{preset.promptTemplate.length}</span>
           <div style="display: flex; gap: 4px;">
-            <button class="btn btn-sm btn-secondary" disabled={editingIndex <= 0} onclick={() => editingIndex--}>Prev</button>
-            <button class="btn btn-sm btn-secondary" disabled={editingIndex >= preset.promptTemplate.length - 1} onclick={() => editingIndex++}>Next</button>
+            <button class="btn btn-sm btn-secondary" disabled={editingIndex <= 0} onclick={() => { editingIndex = editingIndex - 1; }}>Prev</button>
+            <button class="btn btn-sm btn-secondary" disabled={editingIndex >= preset.promptTemplate.length - 1} onclick={() => { editingIndex = editingIndex + 1; }}>Next</button>
           </div>
         </div>
 

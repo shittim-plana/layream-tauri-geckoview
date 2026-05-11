@@ -7,6 +7,7 @@ pub mod hypa;
 pub mod mistral;
 pub mod preset;
 pub mod regex;
+pub mod retry;
 pub mod rpack;
 pub mod types;
 pub mod vertex_api;

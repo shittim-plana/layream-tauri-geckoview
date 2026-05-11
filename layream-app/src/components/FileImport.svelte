@@ -1,12 +1,18 @@
 <script>
   import { isTauri } from "../lib/tauri.js";
+  import { writeFile, BaseDirectory } from "@tauri-apps/plugin-fs";
 
   let { accept = "*/*", label = "파일 불러오기", extensions = "", onfile, disabled = false } = $props();
 
   let loading = $state(false);
   let dragover = $state(false);
   let debugMsg = $state("");
+  let loadingFile = $state("");
+  let loadingSize = $state(0);
   let inputEl;
+
+  const LARGE_FILE_MB = 50;
+  const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024;
 
   async function pickFile() {
     if (disabled || loading) return;
@@ -30,6 +36,12 @@
         clearTimeout(tid);
         const file = e.target?.files?.[0];
         if (file) {
+          loadingFile = file.name;
+          loadingSize = file.size;
+          const sizeMB = file.size / (1024 * 1024);
+          if (sizeMB > LARGE_FILE_MB) {
+            debugMsg = `⚠️ ${sizeMB.toFixed(0)}MB — 대용량 파일은 처리에 시간이 걸릴 수 있습니다`;
+          }
           try {
             const buf = await new Promise((res, rej) => {
               const reader = new FileReader();
@@ -37,10 +49,16 @@
               reader.onerror = () => rej(reader.error);
               reader.readAsArrayBuffer(file);
             });
-            const data = [...new Uint8Array(buf)];
+            const data = new Uint8Array(buf);
             if (typeof onfile === "function") {
               try {
-                await onfile(file.name, data);
+                if (file.size > LARGE_FILE_THRESHOLD) {
+                  const tempName = `_import_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+                  await writeFile(tempName, data, { baseDir: BaseDirectory.AppData });
+                  await onfile(file.name, data, tempName);
+                } else {
+                  await onfile(file.name, data);
+                }
                 debugMsg = "";
               } catch (invokeErr) {
                 debugMsg = `error: ${invokeErr}`;
@@ -82,7 +100,14 @@
             reader.onerror = () => rej(reader.error);
             reader.readAsArrayBuffer(file);
           });
-          onfile?.(file.name, Array.from(new Uint8Array(buf)));
+          const dropData = new Uint8Array(buf);
+          if (file.size > LARGE_FILE_THRESHOLD) {
+            const tempName = `_import_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+            await writeFile(tempName, dropData, { baseDir: BaseDirectory.AppData });
+            await onfile?.(file.name, dropData, tempName);
+          } else {
+            await onfile?.(file.name, dropData);
+          }
         } catch (err) { debugMsg = `error: ${err}`; }
         loading = false;
       })();
@@ -102,8 +127,12 @@
   ondragleave={() => { dragover = false; }}
 >
   {#if loading}
-    <div class="spinner"></div>
-    <p>Loading...</p>
+    {#if loadingFile}
+      <p class="gradient-loading" style="font-size: 14px; font-weight: 500; margin-bottom: 4px; word-break: break-all;">{loadingFile}</p>
+      <p class="gradient-loading" style="font-size: 12px;">{loadingSize < 1024*1024 ? (loadingSize/1024).toFixed(1) + ' KB' : (loadingSize/(1024*1024)).toFixed(1) + ' MB'}</p>
+    {:else}
+      <p class="gradient-loading" style="font-size: 14px; font-weight: 500;">Loading...</p>
+    {/if}
   {:else}
     <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
       <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />

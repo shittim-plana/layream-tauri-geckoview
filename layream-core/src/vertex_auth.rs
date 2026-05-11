@@ -13,7 +13,7 @@ const SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform https://www.
 const REFRESH_MARGIN: Duration = Duration::from_secs(300);
 
 pub const VERTEX_CLIENT_ID: &str = "317210024447-v4g6e0e1q5933vogajp0651vhkrgal06.apps.googleusercontent.com";
-pub const LAYREAM_REDIRECT_URI: &str = "com.shittimplana.layream://oauth/callback";
+pub const LAYREAM_REDIRECT_URI: &str = "com.googleusercontent.apps.317210024447-v4g6e0e1q5933vogajp0651vhkrgal06:/oauth2callback";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthCredentials {
@@ -94,7 +94,7 @@ pub fn build_auth_url(creds: &OAuthCredentials, pkce: Option<&PkceChallenge>) ->
     }
     let query: String = params
         .iter()
-        .map(|(k, v)| format!("{}={}", k, urlencoded(v)))
+        .map(|(k, v)| format!("{}={}", k, uri_encode(v)))
         .collect::<Vec<_>>()
         .join("&");
     format!("{}?{}", AUTH_ENDPOINT, query)
@@ -124,7 +124,7 @@ pub async fn exchange_code(
         .form(&params)
         .send()
         .await
-        .map_err(|e| LayreamError::Http(e.to_string()))?;
+        .map_err(|e| LayreamError::Http(format!("token exchange: {e:#}")))?;
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
@@ -158,7 +158,7 @@ pub async fn refresh_token(
         .form(&params)
         .send()
         .await
-        .map_err(|e| LayreamError::Http(e.to_string()))?;
+        .map_err(|e| LayreamError::Http(format!("token refresh: {e:#}")))?;
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
@@ -270,12 +270,24 @@ pub async fn list_gcp_projects(
     Ok(projects)
 }
 
+pub fn uri_encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                String::from(b as char)
+            }
+            _ => format!("%{:02X}", b),
+        })
+        .collect()
+}
+
 pub fn urlencoded(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
                 String::from(b as char)
             }
+            b' ' => String::from('+'),
             _ => format!("%{:02X}", b),
         })
         .collect()
@@ -330,5 +342,29 @@ mod tests {
         };
         assert!(!far_future.is_expired());
         assert!(!far_future.needs_refresh());
+    }
+
+    #[test]
+    fn urlencoded_space_as_plus() {
+        assert_eq!(urlencoded("select_account consent"), "select_account+consent");
+        assert_eq!(urlencoded("a b c"), "a+b+c");
+        assert_eq!(urlencoded("no_spaces"), "no_spaces");
+    }
+
+    #[test]
+    fn auth_url_prompt_encoding() {
+        let creds = OAuthCredentials {
+            client_id: "test".into(),
+            client_secret: None,
+            redirect_uri: "http://localhost/cb".into(),
+        };
+        let url = build_auth_url(&creds, None);
+        assert!(url.contains("prompt=select_account%20consent"));
+    }
+
+    #[test]
+    fn uri_encode_uses_percent() {
+        assert_eq!(uri_encode("select_account consent"), "select_account%20consent");
+        assert_eq!(uri_encode("a b"), "a%20b");
     }
 }

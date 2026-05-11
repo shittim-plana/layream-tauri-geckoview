@@ -1,7 +1,10 @@
 use tauri::Manager;
 
+mod browser;
 mod commands;
+mod commands_hypa;
 mod persistence;
+mod streaming_service;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -13,10 +16,16 @@ pub fn run() {
         )
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(browser::init())
+        .plugin(streaming_service::init())
         .manage(commands::AuthState::default())
         .manage(commands::RequestLogState::default())
+        .manage(commands::CharacterAssetsState::default())
+        .manage(commands::StreamCancelState::default())
+        .manage(commands_hypa::HypaState::default())
         .setup(|app| {
             let auth_state = app.state::<commands::AuthState>();
             auth_state.load_persisted_tokens(app.handle());
@@ -50,8 +59,49 @@ pub fn run() {
             commands::embed_voyage,
             commands::gca_load_code_assist,
             commands::gca_check_opt_out,
-            commands::cmd_save_hypa,
-            commands::cmd_load_hypa,
+            commands::open_url,
+            commands::open_custom_tab,
+            commands::request_storage_permission,
+            commands::request_notification_permission,
+            commands::get_pending_oauth,
+            commands::list_browsers,
+            commands::open_in_browser,
+            commands::cancel_chat,
+            commands::start_streaming,
+            commands::stop_streaming,
+            commands::update_notification,
+            commands::cmd_save_current_preset,
+            commands::cmd_load_current_preset,
+            commands::cmd_save_session,
+            commands::cmd_load_session,
+            commands::parse_risum,
+            commands::load_preset_from_path,
+            commands::load_character_from_path,
+            commands::parse_risum_from_path,
+            commands::generate_user_message,
+            commands::save_file_to_downloads,
+            commands::get_asset_data,
+            commands::cmd_save_current_character,
+            commands::cmd_load_current_character,
+            commands::library_save_preset,
+            commands::library_list_presets,
+            commands::library_load_preset,
+            commands::library_delete_preset,
+            commands::library_save_character,
+            commands::library_list_characters,
+            commands::library_load_character,
+            commands::library_delete_character,
+            commands::library_save_module,
+            commands::library_list_modules,
+            commands::library_load_module,
+            commands::library_delete_module,
+            commands_hypa::hypa_summarize,
+            commands_hypa::hypa_search,
+            commands_hypa::hypa_pin_message,
+            commands_hypa::hypa_invalidate_summary,
+            commands_hypa::hypa_cleanup,
+            commands_hypa::hypa_load_all,
+            commands_hypa::hypa_save_all,
         ])
         .run(tauri::generate_context!());
 

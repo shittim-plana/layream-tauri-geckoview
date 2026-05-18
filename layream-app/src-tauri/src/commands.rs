@@ -350,10 +350,10 @@ fn messages_to_contents(messages: &[Value]) -> Vec<Content> {
             log::warn!("messages_to_contents: skipping message[{i}] — missing role or text");
             return None;
         }
-        let api_role = match role.unwrap() { "char" => "model", r => r };
+        let api_role = match role.expect("guarded by is_none check") { "char" => "model", r => r };
         Some(Content {
             role: api_role.to_string(),
-            parts: vec![Part { text: Some(text.unwrap().to_string()), thought: None, inline_data: None }],
+            parts: vec![Part { text: Some(text.expect("guarded by is_none check").to_string()), thought: None, inline_data: None }],
         })
     }).collect()
 }
@@ -366,10 +366,10 @@ fn messages_to_chat_messages(messages: &[Value]) -> Vec<mistral::ChatMessage> {
             log::warn!("messages_to_chat_messages: skipping message[{i}] — missing role or text");
             return None;
         }
-        let mistral_role = match role.unwrap() { "model" | "char" => "assistant", r => r };
+        let mistral_role = match role.expect("guarded by is_none check") { "model" | "char" => "assistant", r => r };
         Some(mistral::ChatMessage {
             role: mistral_role.to_string(),
-            content: text.unwrap().to_string(),
+            content: text.expect("guarded by is_none check").to_string(),
             tool_calls: None,
             tool_call_id: None,
         })

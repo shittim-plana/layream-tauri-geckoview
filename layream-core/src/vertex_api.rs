@@ -275,6 +275,12 @@ pub async fn list_models(
         async { req.send().await.map_err(|e| LayreamError::Http(e.to_string())) }
     }).await?;
 
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(LayreamError::ApiError { status, body });
+    }
+
     let body: Value = resp
         .json()
         .await

@@ -362,35 +362,56 @@
             </div>
             <div class="field">
               <label class="label">Top P</label>
-              <input class="input" type="number" step="0.01" value={displayParam(preset.top_p)}
+              <input class="input" type="number" step="0.01" placeholder="미설정" value={displayParam(preset.top_p)}
                 oninput={(e) => preset.top_p = parseParam(e.target.value)} />
             </div>
             <div class="field">
               <label class="label">Top K</label>
-              <input class="input" type="number" value={displayParam(preset.top_k)}
+              <input class="input" type="number" placeholder="미설정" value={displayParam(preset.top_k)}
                 oninput={(e) => preset.top_k = parseParam(e.target.value)} />
             </div>
             <div class="field">
               <label class="label">Min P</label>
-              <input class="input" type="number" step="0.01" value={displayParam(preset.min_p)}
+              <input class="input" type="number" step="0.01" placeholder="미설정" value={displayParam(preset.min_p)}
                 oninput={(e) => preset.min_p = parseParam(e.target.value)} />
             </div>
             <div class="field">
+              <label class="label">Top A</label>
+              <input class="input" type="number" step="0.01" placeholder="미설정" value={displayParam(preset.top_a)}
+                oninput={(e) => preset.top_a = parseParam(e.target.value)} />
+            </div>
+            <div class="field">
+              <label class="label">Repetition Penalty</label>
+              <input class="input" type="number" step="0.01" placeholder="미설정" value={displayParam(preset.repetition_penalty)}
+                oninput={(e) => preset.repetition_penalty = parseParam(e.target.value)} />
+            </div>
+            <div class="field">
               <label class="label">Freq Penalty</label>
-              <input class="input" type="number" step="0.1" value={displayParam(preset.frequencyPenalty)}
+              <input class="input" type="number" step="0.1" placeholder="미설정" value={displayParam(preset.frequencyPenalty)}
                 oninput={(e) => preset.frequencyPenalty = parseParam(e.target.value)} />
             </div>
             <div class="field">
               <label class="label">Presence Penalty</label>
-              <input class="input" type="number" step="0.1" value={displayParam(preset.PresensePenalty)}
+              <input class="input" type="number" step="0.1" placeholder="미설정" value={displayParam(preset.PresensePenalty)}
                 oninput={(e) => preset.PresensePenalty = parseParam(e.target.value)} />
+            </div>
+            <div class="field">
+              <label class="label">Reason Effort</label>
+              <input class="input" type="number" step="0.1" placeholder="미설정" value={displayParam(preset.reasonEffort)}
+                oninput={(e) => preset.reasonEffort = parseParam(e.target.value)} />
+            </div>
+            <div class="field">
+              <label class="label">Thinking Tokens</label>
+              <input class="input" type="number" placeholder="미설정" value={displayParam(preset.thinkingTokens)}
+                oninput={(e) => preset.thinkingTokens = parseParam(e.target.value)} />
             </div>
           </div>
         </div>
       </div>
 
+      {#if !preset.promptTemplate?.length}
       <div class="card">
-        <div class="card-header"><span class="card-title">Prompt Settings</span></div>
+        <div class="card-header"><span class="card-title">Legacy Prompt Fields</span></div>
         <div class="card-body">
           <div class="field">
             <label class="label">Main Prompt</label>
@@ -404,14 +425,65 @@
             <label class="label">Global Note</label>
             <textarea class="textarea" rows="3" bind:value={preset.globalNote}></textarea>
           </div>
-          {#if preset.promptSettings?.assistantPrefill !== undefined}
-            <div class="field">
-              <label class="label">Assistant Prefill</label>
-              <textarea class="textarea" rows="2" bind:value={preset.promptSettings.assistantPrefill}></textarea>
-            </div>
-          {/if}
         </div>
       </div>
+      {/if}
+
+      {#if preset.promptSettings}
+      <div class="card">
+        <div class="card-header"><span class="card-title">Prompt Settings</span></div>
+        <div class="card-body">
+          <div class="field">
+            <label class="label">Assistant Prefill</label>
+            <textarea class="textarea" rows="2" bind:value={preset.promptSettings.assistantPrefill}></textarea>
+          </div>
+          <div class="field">
+            <label class="label">Post End Inner Format</label>
+            <input class="input" type="text" bind:value={preset.promptSettings.postEndInnerFormat} />
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
+            <label style="display: flex; align-items: center; gap: 8px;">
+              <input type="checkbox" bind:checked={preset.promptSettings.sendChatAsSystem} />
+              Send Chat As System
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px;">
+              <input type="checkbox" bind:checked={preset.promptSettings.sendName} />
+              Send Name
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px;">
+              <input type="checkbox" bind:checked={preset.promptSettings.utilOverride} />
+              Util Override
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px;">
+              <input type="checkbox" bind:checked={preset.promptSettings.customChainOfThought} />
+              Custom Chain of Thought
+            </label>
+          </div>
+          <div class="field" style="margin-top: 8px;">
+            <label class="label">Max Thought Tag Depth</label>
+            <input class="input" type="number" bind:value={preset.promptSettings.maxThoughtTagDepth} />
+          </div>
+        </div>
+      </div>
+      {/if}
+
+      {#if preset.customPromptTemplateToggle !== undefined}
+      <div class="card">
+        <div class="card-header"><span class="card-title">토글 정의 (customPromptTemplateToggle)</span></div>
+        <div class="card-body">
+          <textarea class="textarea" rows="6" bind:value={preset.customPromptTemplateToggle}></textarea>
+        </div>
+      </div>
+      {/if}
+
+      {#if preset.templateDefaultVariables !== undefined}
+      <div class="card">
+        <div class="card-header"><span class="card-title">기본 변수 (templateDefaultVariables)</span></div>
+        <div class="card-body">
+          <textarea class="textarea" rows="4" placeholder="key=value&#10;key2=value2" bind:value={preset.templateDefaultVariables}></textarea>
+        </div>
+      </div>
+      {/if}
     {/if}
   {/if}
 </div>

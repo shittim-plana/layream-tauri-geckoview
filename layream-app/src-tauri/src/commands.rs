@@ -57,22 +57,37 @@ impl Default for AuthState {
 
 impl AuthState {
     pub fn persist_tokens(&self, app: &tauri::AppHandle) {
-        if let Ok(data_dir) = persistence::get_data_dir(app) {
-            if let (Ok(vertex), Ok(gca)) = (self.vertex_tokens.lock(), self.gca_tokens.lock()) {
-                let _ = persistence::save_tokens(&data_dir, &vertex.clone(), &gca.clone());
+        match persistence::get_data_dir(app) {
+            Ok(data_dir) => {
+                match (self.vertex_tokens.lock(), self.gca_tokens.lock()) {
+                    (Ok(vertex), Ok(gca)) => {
+                        if let Err(e) = persistence::save_tokens(&data_dir, &vertex.clone(), &gca.clone()) {
+                            log::warn!("Failed to save tokens: {e}");
+                        }
+                    }
+                    _ => log::warn!("Failed to lock token state for persistence"),
+                }
             }
+            Err(e) => log::warn!("Failed to get data dir for token persistence: {e}"),
         }
     }
 
     pub fn load_persisted_tokens(&self, app: &tauri::AppHandle) {
         if let Ok(data_dir) = persistence::get_data_dir(app) {
-            if let Ok((vertex, gca)) = persistence::load_tokens(&data_dir) {
-                if let Ok(mut guard) = self.vertex_tokens.lock() {
-                    *guard = vertex;
+            match persistence::load_tokens(&data_dir) {
+                Ok((vertex, gca)) => {
+                    if let Ok(mut guard) = self.vertex_tokens.lock() {
+                        *guard = vertex;
+                    } else {
+                        log::warn!("Failed to lock vertex_tokens for loading");
+                    }
+                    if let Ok(mut guard) = self.gca_tokens.lock() {
+                        *guard = gca;
+                    } else {
+                        log::warn!("Failed to lock gca_tokens for loading");
+                    }
                 }
-                if let Ok(mut guard) = self.gca_tokens.lock() {
-                    *guard = gca;
-                }
+                Err(e) => log::debug!("No saved tokens found: {e}"),
             }
         }
     }

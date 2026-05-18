@@ -238,7 +238,16 @@
               emit(fmt.replace(/\{\{slot\}\}/g, characterPersona || userName));
             } else if (type === "memory") {
               const fmt = item.innerFormat || "{{slot}}";
-              emit(fmt.replace(/\{\{slot\}\}/g, ""));
+              let memoryBlock = "";
+              if (hypaApi?.loadAll) {
+                try {
+                  const allSummaries = await hypaApi.loadAll();
+                  if (Array.isArray(allSummaries) && allSummaries.length > 0) {
+                    memoryBlock = allSummaries.map(s => s?.text || s?.content || "").filter(Boolean).join("\n\n");
+                  }
+                } catch (e) { console.warn("memory slot load failed:", e); }
+              }
+              if (memoryBlock || fmt !== "{{slot}}") emit(fmt.replace(/\{\{slot\}\}/g, memoryBlock));
             } else if (type === "lorebook") {
               for (const entry of lorebook) {
                 const content = entry.content || entry.value || "";
@@ -287,11 +296,26 @@
         } catch (e) { console.warn("RAG injection failed:", e); }
       }
 
-      const msgs = messages.filter(m => m.role !== "error").map((m, idx, arr) => ({
+      let msgs = messages.filter(m => m.role !== "error").map((m, idx, arr) => ({
         role: m.role === "char" ? "model" : m.role,
-        // Replace the last user message text with the RAG-injected version
         text: idx === arr.length - 1 && m.role === "user" ? injectedUserMsg : m.text,
       }));
+
+      const maxCtx = preset?.maxContext;
+      if (maxCtx && maxCtx > 0 && maxCtx !== -1000) {
+        const maxChars = maxCtx * 4;
+        let total = (systemPrompt?.length || 0) + (postChatText?.length || 0);
+        let keepFrom = 0;
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          total += msgs[i].text?.length || 0;
+          if (total > maxChars) { keepFrom = i + 1; break; }
+        }
+        if (keepFrom > 0) msgs = msgs.slice(keepFrom);
+      }
+
+      if (postChatText) {
+        msgs = [...msgs, { role: "user", text: postChatText }];
+      }
 
       let result;
       if (provider === "vertex") {
@@ -406,6 +430,11 @@
 
   async function regenerateResponse() {
     if (streaming || messages.length === 0) return;
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg.role === "char") {
+      if (!lastMsg.alternatives) lastMsg.alternatives = [];
+      lastMsg.alternatives.push(lastMsg.text);
+    }
     let msgs = [...messages];
     while (msgs.length > 0 && (msgs[msgs.length - 1].role === "char" || msgs[msgs.length - 1].role === "error")) {
       msgs.pop();
@@ -413,11 +442,26 @@
     if (msgs.length === 0) return;
     const lastUser = msgs[msgs.length - 1];
     if (lastUser.role !== "user") return;
+    const savedAlts = lastMsg.role === "char" ? lastMsg.alternatives : undefined;
     msgs.pop();
     messages = msgs;
     try {
       await sendChatMessage(lastUser.text);
+      if (savedAlts && messages.length > 0 && messages[messages.length - 1].role === "char") {
+        messages[messages.length - 1].alternatives = savedAlts;
+        messages = [...messages];
+      }
     } catch (_) {}
+  }
+
+  function swipeResponse(msg, direction) {
+    if (!msg.alternatives?.length) return;
+    const all = [...msg.alternatives, msg.text];
+    const currentIdx = all.length - 1;
+    const newIdx = (currentIdx + direction + all.length) % all.length;
+    msg.alternatives = all.filter((_, i) => i !== newIdx);
+    msg.text = all[newIdx];
+    messages = [...messages];
   }
 
   function swipeGreeting(direction) {
@@ -463,6 +507,12 @@
             <button onclick={() => swipeGreeting(-1)} aria-label="이전 인사말">◀</button>
             <span>{greetingIndex + 1}/{greetings.length}</span>
             <button onclick={() => swipeGreeting(1)} aria-label="다음 인사말">▶</button>
+          </div>
+        {:else if msg.role === "char" && msg.alternatives?.length}
+          <div class="swipe-nav">
+            <button onclick={() => swipeResponse(msg, -1)} aria-label="이전 응답">◀</button>
+            <span>{(msg.alternatives.length)}/{msg.alternatives.length + 1}</span>
+            <button onclick={() => swipeResponse(msg, 1)} aria-label="다음 응답">▶</button>
           </div>
         {/if}
       </div>

@@ -1,6 +1,6 @@
 <script>
   import { invoke } from "../lib/tauri.js";
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
 
   let debugLines = $state([]);
   let debugLog = $derived(debugLines.join("\n"));
@@ -135,6 +135,10 @@
     { id: "code_execution", label: "Code Execution" },
   ];
 
+  // --- Event listener cleanup handles ---
+  let cleanupAuthListener;
+  let cleanupGcaListener;
+
   // --- Actions ---
   async function checkVertexStatus() {
     try {
@@ -188,21 +192,30 @@
     } catch (e) { dbg(`Vertex auth CATCH: ${e}`); }
   }
 
-  // Listen for auth completion events emitted by App.svelte deep link handler
+  // Listen for auth completion events emitted by App.svelte deep link handler.
+  // Stores cleanup handles so onDestroy can remove them.
   async function listenAuthEvents() {
-    window.addEventListener("oauth-complete", (e) => {
+    const handler = (e) => {
       dbg(`OAuth complete: ${e.detail}`);
       if (e.detail === "vertex") checkVertexStatus();
       if (e.detail === "gca") { checkGcaStatus(); loadGcaProfile(); }
-    });
+    };
+    window.addEventListener("oauth-complete", handler);
+    cleanupAuthListener = () => window.removeEventListener("oauth-complete", handler);
+
     try {
       const { listen } = await import("@tauri-apps/api/event");
-      await listen("gca-auth-complete", (event) => {
+      cleanupGcaListener = await listen("gca-auth-complete", (event) => {
         dbg(`GCA loopback result: ${event.payload}`);
         if (event.payload === "ok") { checkGcaStatus(); loadGcaProfile(); }
       });
     } catch (e) { dbg(`event listen failed: ${e}`); }
   }
+
+  onDestroy(() => {
+    cleanupAuthListener?.();
+    cleanupGcaListener?.();
+  });
 
   async function disconnectVertex() {
     await invoke("vertex_oauth_disconnect");

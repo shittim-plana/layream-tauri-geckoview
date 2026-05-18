@@ -178,8 +178,13 @@
   // ------- Summary list actions -------
 
   function openModal(index) {
+    if (index < 0 || index >= hypaSummaries.length) {
+      modalSummary = null;
+      modalIndex = -1;
+      return;
+    }
     modalIndex = index;
-    modalSummary = hypaSummaries[index] ?? null;
+    modalSummary = hypaSummaries[index];
   }
 
   function closeModal() {
@@ -276,7 +281,9 @@
       await saveHypa();
       return summary;
     } catch (e) {
-      console.warn("hypa_summarize failed:", e);
+      console.error("hypa_summarize failed:", e);
+      hypaActionStatus = `Summarization failed: ${e}`;
+      setTimeout(() => { hypaActionStatus = ""; }, STATUS_CLEAR_MS);
       return null;
     }
   }

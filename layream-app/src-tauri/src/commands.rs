@@ -221,7 +221,7 @@ pub async fn load_preset_from_path(name: String, temp_name: String, app: tauri::
     let data_dir = persistence::get_data_dir(&app)?;
     let path = data_dir.join(&temp_name);
     let data = std::fs::read(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
-    let _ = std::fs::remove_file(&path);
+    if let Err(e) = std::fs::remove_file(&path) { log::warn!("cleanup temp file {}: {e}", path.display()); }
     tokio::task::spawn_blocking(move || -> Result<Value, String> {
         let p = preset::read_preset(&name, &data).map_err(|e| e.to_string())?;
         serde_json::to_value(&p).map_err(|e| e.to_string())
@@ -247,7 +247,7 @@ pub async fn load_character_from_path(
         std::fs::rename(&path, &charx_store)
             .or_else(|_| std::fs::copy(&path, &charx_store).map(|_| ()))
             .map_err(|e| format!("Move charx to cache: {}", e))?;
-        let _ = std::fs::remove_file(&path);
+        if let Err(e) = std::fs::remove_file(&path) { log::warn!("cleanup temp file {}: {e}", path.display()); }
 
         let store_clone = charx_store.clone();
         let result = tokio::task::spawn_blocking(move || -> Result<_, String> {
@@ -273,7 +273,7 @@ pub async fn load_character_from_path(
         Ok(result)
     } else {
         let data = std::fs::read(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
-        let _ = std::fs::remove_file(&path);
+        if let Err(e) = std::fs::remove_file(&path) { log::warn!("cleanup temp file {}: {e}", path.display()); }
         let result = tokio::task::spawn_blocking(move || -> Result<_, String> {
             let ch = charx::read_character(&name, &data).map_err(|e| e.to_string())?;
             let card_json = match &ch.card {
@@ -298,7 +298,7 @@ pub async fn parse_risum_from_path(temp_name: String, app: tauri::AppHandle) -> 
     let data_dir = persistence::get_data_dir(&app)?;
     let path = data_dir.join(&temp_name);
     let data = std::fs::read(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
-    let _ = std::fs::remove_file(&path);
+    if let Err(e) = std::fs::remove_file(&path) { log::warn!("cleanup temp file {}: {e}", path.display()); }
     tokio::task::spawn_blocking(move || -> Result<Value, String> {
         preset::parse_risum_data(&data).map_err(|e| e.to_string())
     }).await.map_err(|e| e.to_string())?
@@ -655,7 +655,9 @@ pub async fn vertex_oauth_start(
     let auth_url = vertex_auth::build_auth_url(&creds, Some(&pkce));
     *state.vertex_pkce.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(pkce.clone());
     if let Ok(data_dir) = persistence::get_data_dir(&app) {
-        let _ = std::fs::write(data_dir.join("pkce_verifier.txt"), &pkce.verifier);
+        if let Err(e) = std::fs::write(data_dir.join("pkce_verifier.txt"), &pkce.verifier) {
+            log::warn!("Failed to persist PKCE verifier: {e}");
+        }
     }
     Ok(auth_url)
 }
@@ -674,7 +676,9 @@ pub async fn vertex_oauth_callback(
         })
         .ok_or("No PKCE verifier found")?;
     if let Ok(data_dir) = persistence::get_data_dir(&app) {
-        let _ = std::fs::remove_file(data_dir.join("pkce_verifier.txt"));
+        if let Err(e) = std::fs::remove_file(data_dir.join("pkce_verifier.txt")) {
+            log::warn!("Failed to clean PKCE verifier: {e}");
+        }
     }
     let creds = OAuthCredentials {
         client_id: VERTEX_CLIENT_ID.to_string(),

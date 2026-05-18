@@ -154,7 +154,7 @@ pub async fn stream_generate(
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await.unwrap_or_else(|e| format!("(body read failed: {e})"));
         return Err(LayreamError::ApiError { status, body });
     }
 
@@ -225,7 +225,7 @@ pub async fn generate_non_streaming(
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await.unwrap_or_else(|e| format!("(body read failed: {e})"));
         return Err(LayreamError::ApiError { status, body });
     }
 
@@ -282,7 +282,7 @@ pub async fn list_models(
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await.unwrap_or_else(|e| format!("(body read failed: {e})"));
         return Err(LayreamError::ApiError { status, body });
     }
 
@@ -342,7 +342,7 @@ pub async fn embed_content(
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await.unwrap_or_else(|e| format!("(body read failed: {e})"));
         return Err(LayreamError::ApiError { status, body });
     }
 
@@ -398,7 +398,7 @@ pub async fn batch_embed_contents(
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await.unwrap_or_else(|e| format!("(body read failed: {e})"));
         return Err(LayreamError::ApiError { status, body });
     }
 

@@ -58,7 +58,7 @@ where
                 }
                 let delay = retry_after_from_headers(resp.headers())
                     .unwrap_or(BASE_DELAY * 2u32.pow(attempt));
-                let body = resp.text().await.unwrap_or_default();
+                let body = resp.text().await.unwrap_or_else(|e| format!("(body read failed: {e})"));
                 last_err = Some(LayreamError::ApiError { status, body });
 
                 if attempt < MAX_RETRIES {

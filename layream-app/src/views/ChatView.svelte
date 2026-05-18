@@ -20,6 +20,12 @@
   let unlisten;
   let unlistenAppFlush;
   let sessionSaveTimeout;
+  let error = $state("");
+  const ERROR_CLEAR_MS = 3000;
+  function flashError(msg) {
+    error = msg;
+    setTimeout(() => { if (error === msg) error = ""; }, ERROR_CLEAR_MS);
+  }
 
   // Stable id for each message — used by HyPA Summary.chatMemos to link
   // summaries back to the originating messages (and by hypa_pin_message /
@@ -48,10 +54,13 @@
           if (sessionLoaded) {
             try {
               await invoke("cmd_save_session", { session: { messages } });
-            } catch (e) { console.warn("ChatView app-flush save failed:", e); }
+            } catch (e) { console.error("ChatView app-flush save failed:", e); }
           }
         });
-      } catch (e) { console.warn("Event listen failed:", e); }
+      } catch (e) {
+        console.error("Event listen failed:", e);
+        flashError("Event listener setup failed — streaming may not work");
+      }
     }
     // Load persisted chat session
     try {
@@ -59,7 +68,10 @@
       if (savedSession?.messages?.length && messages.length === 0) {
         messages = savedSession.messages;
       }
-    } catch (e) { console.warn("Failed to load session:", e); }
+    } catch (e) {
+      console.error("Failed to load session:", e);
+      flashError("Failed to load previous session");
+    }
     sessionLoaded = true;
 
     // Expose interface to parent
@@ -72,9 +84,11 @@
   onDestroy(() => {
     if (unlisten) unlisten();
     if (unlistenAppFlush) unlistenAppFlush();
-    // Flush pending session save immediately before clearing timeout
+    // Flush pending session save immediately before clearing timeout.
+    // onDestroy: UI state updates are not visible, so console.error is the
+    // maximum viable handling — no flashError.
     if (sessionLoaded && messages.length > 0) {
-      invoke("cmd_save_session", { session: { messages } }).catch(() => {});
+      invoke("cmd_save_session", { session: { messages } }).catch(e => console.error("session save on destroy failed:", e));
     }
     clearTimeout(sessionSaveTimeout);
   });
@@ -96,7 +110,10 @@
       sessionSaveTimeout = setTimeout(async () => {
         try {
           await invoke("cmd_save_session", { session: { messages } });
-        } catch (e) { console.warn("Session save failed:", e); }
+        } catch (e) {
+          console.error("Session save failed:", e);
+          flashError(`Session save failed: ${e}`);
+        }
       }, 1000);
     }
   });
@@ -123,7 +140,8 @@
         return Array.isArray(result?.[0]) ? result[0] : null;
       }
     } catch (e) {
-      console.warn("embed for RAG failed:", e);
+      console.error("embed for RAG failed:", e);
+      flashError("Embedding failed — sending without RAG context");
     }
     return null;
   }
@@ -154,7 +172,7 @@
     streamingText = "";
 
     try {
-      await invoke("start_streaming", { text: "AI 응답 수신 중..." }).catch(() => {});
+      await invoke("start_streaming", { text: "AI 응답 수신 중..." }).catch(e => console.error("start_streaming failed:", e));
 
       const settings = await invoke("cmd_load_settings") || {};
       const provider = settings.chatProvider || "vertex";
@@ -247,7 +265,10 @@
                   if (Array.isArray(allSummaries) && allSummaries.length > 0) {
                     memoryBlock = allSummaries.map(s => s?.text || s?.content || "").filter(Boolean).join("\n\n");
                   }
-                } catch (e) { console.warn("memory slot load failed:", e); }
+                } catch (e) {
+                  console.error("memory slot load failed:", e);
+                  flashError("Failed to load memory for prompt");
+                }
               }
               if (memoryBlock || fmt !== "{{slot}}") emit(fmt.replace(/\{\{slot\}\}/g, memoryBlock));
             } else if (type === "lorebook") {
@@ -276,7 +297,10 @@
             systemPrompt = preChatParts.join("\n\n");
           }
         }
-      } catch (e) { console.warn("assemblePrompt failed:", e); }
+      } catch (e) {
+        console.error("assemblePrompt failed:", e);
+        flashError("Preset/prompt assembly failed — sending without system prompt");
+      }
 
       // RAG: retrieve relevant summaries, inject as a memory header into the user message
       let injectedUserMsg = userMsg;
@@ -295,7 +319,10 @@
               }
             }
           }
-        } catch (e) { console.warn("RAG injection failed:", e); }
+        } catch (e) {
+          console.error("RAG injection failed:", e);
+          flashError("RAG context retrieval failed — sending without memory");
+        }
       }
 
       let msgs = messages.filter(m => m.role !== "error").map((m, idx, arr) => ({
@@ -380,7 +407,8 @@
         if (hypaApi?.triggerSummarizationIfNeeded) {
           const h = settings.hypa || {};
           hypaApi.triggerSummarizationIfNeeded(messages, h.summaryUnit).catch(e => {
-            console.warn("auto-summarize failed:", e);
+            console.error("auto-summarize failed:", e);
+            flashError("Auto-summarization failed");
           });
         }
       }
@@ -389,7 +417,7 @@
       messages = [...messages, { chatId: newChatId(), role: "error", text: `Error: ${e}`, time: new Date().toLocaleTimeString() }];
       throw e;
     } finally {
-      await invoke("stop_streaming").catch(() => {});
+      await invoke("stop_streaming").catch(e => console.error("stop_streaming failed:", e));
       streaming = false;
       streamingText = "";
     }
@@ -427,7 +455,10 @@
 
   function clearChat() {
     messages = [];
-    invoke("cmd_save_session", { session: { messages: [] } }).catch(() => {});
+    invoke("cmd_save_session", { session: { messages: [] } }).catch(e => {
+      console.error("session clear save failed:", e);
+      flashError("Failed to clear session on disk");
+    });
   }
 
   function deleteMessage(chatId) {
@@ -498,6 +529,10 @@
   calculations against viewport units.
 -->
 <div class="chat-view">
+  {#if error}
+    <div class="chat-error-toast">{error}</div>
+  {/if}
+
   <div class="chat-messages">
     {#if messages.length === 0}
       <div class="empty-state">
@@ -619,5 +654,20 @@
     background: var(--bg3); border: 1px solid var(--bg4);
     border-radius: var(--radius-sm); padding: 2px 8px;
     color: var(--fg2); cursor: pointer; font-size: 12px;
+  }
+  .chat-error-toast {
+    position: fixed;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    background: var(--error, #e53935);
+    color: #fff;
+    padding: 6px 16px;
+    border-radius: 6px;
+    font-size: 12px;
+    max-width: 90vw;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   }
 </style>

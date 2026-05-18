@@ -127,7 +127,7 @@ pub async fn exchange_code(
         .map_err(|e| LayreamError::Http(format!("token exchange: {e:#}")))?;
 
     if !resp.status().is_success() {
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await.unwrap_or_else(|e| format!("(body read failed: {e})"));
         return Err(LayreamError::OAuthError(body));
     }
 
@@ -161,7 +161,7 @@ pub async fn refresh_token(
         .map_err(|e| LayreamError::Http(format!("token refresh: {e:#}")))?;
 
     if !resp.status().is_success() {
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await.unwrap_or_else(|e| format!("(body read failed: {e})"));
         if body.contains("invalid_grant") {
             return Err(LayreamError::InvalidGrant);
         }
@@ -199,12 +199,16 @@ pub async fn revoke_token(
     client: &reqwest::Client,
     token: &str,
 ) -> Result<(), LayreamError> {
-    let _ = client
+    let resp = client
         .post(REVOKE_ENDPOINT)
         .form(&[("token", token)])
         .send()
         .await
         .map_err(|e| LayreamError::Http(e.to_string()))?;
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_else(|e| format!("(body read failed: {e})"));
+        return Err(LayreamError::Http(format!("token revoke failed: {body}")));
+    }
     Ok(())
 }
 
@@ -243,7 +247,7 @@ pub async fn list_gcp_projects(
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await.unwrap_or_else(|e| format!("(body read failed: {e})"));
         return Err(LayreamError::ApiError { status, body });
     }
 

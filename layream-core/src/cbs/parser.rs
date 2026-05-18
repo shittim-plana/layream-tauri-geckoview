@@ -317,24 +317,32 @@ fn evaluate_when_condition(statement: &mut Vec<String>, ctx: &mut CbsContext, de
                 l != r
             }
             ">" => {
-                let l: f64 = evaluate_depth(&left, ctx, depth + 1).parse().unwrap_or(f64::NAN);
-                let r: f64 = evaluate_depth(&right, ctx, depth + 1).parse().unwrap_or(f64::NAN);
-                l > r
+                match (evaluate_depth(&left, ctx, depth + 1).parse::<f64>(),
+                       evaluate_depth(&right, ctx, depth + 1).parse::<f64>()) {
+                    (Ok(l), Ok(r)) => l > r,
+                    _ => false,
+                }
             }
             "<" => {
-                let l: f64 = evaluate_depth(&left, ctx, depth + 1).parse().unwrap_or(f64::NAN);
-                let r: f64 = evaluate_depth(&right, ctx, depth + 1).parse().unwrap_or(f64::NAN);
-                l < r
+                match (evaluate_depth(&left, ctx, depth + 1).parse::<f64>(),
+                       evaluate_depth(&right, ctx, depth + 1).parse::<f64>()) {
+                    (Ok(l), Ok(r)) => l < r,
+                    _ => false,
+                }
             }
             ">=" => {
-                let l: f64 = evaluate_depth(&left, ctx, depth + 1).parse().unwrap_or(f64::NAN);
-                let r: f64 = evaluate_depth(&right, ctx, depth + 1).parse().unwrap_or(f64::NAN);
-                l >= r
+                match (evaluate_depth(&left, ctx, depth + 1).parse::<f64>(),
+                       evaluate_depth(&right, ctx, depth + 1).parse::<f64>()) {
+                    (Ok(l), Ok(r)) => l >= r,
+                    _ => false,
+                }
             }
             "<=" => {
-                let l: f64 = evaluate_depth(&left, ctx, depth + 1).parse().unwrap_or(f64::NAN);
-                let r: f64 = evaluate_depth(&right, ctx, depth + 1).parse().unwrap_or(f64::NAN);
-                l <= r
+                match (evaluate_depth(&left, ctx, depth + 1).parse::<f64>(),
+                       evaluate_depth(&right, ctx, depth + 1).parse::<f64>()) {
+                    (Ok(l), Ok(r)) => l <= r,
+                    _ => false,
+                }
             }
             "vis" => {
                 let var_val = ctx.variables.get(&right).cloned().unwrap_or_default();

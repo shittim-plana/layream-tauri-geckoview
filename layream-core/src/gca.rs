@@ -51,7 +51,7 @@ pub async fn stream_generate(
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await.unwrap_or_else(|e| format!("(body read failed: {e})"));
         return Err(LayreamError::ApiError { status, body });
     }
 
@@ -113,7 +113,7 @@ pub async fn generate_non_streaming(
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await.unwrap_or_else(|e| format!("(body read failed: {e})"));
         return Err(LayreamError::ApiError { status, body });
     }
 
@@ -156,7 +156,7 @@ pub async fn check_and_opt_out(
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await.unwrap_or_else(|e| format!("(body read failed: {e})"));
         return Err(LayreamError::ApiError { status, body });
     }
 
@@ -164,13 +164,16 @@ pub async fn check_and_opt_out(
 
     if body.get("freeTierDataCollectionOptin") == Some(&Value::Bool(true)) {
         let set_url = format!("{}/setCodeAssistGlobalUserSetting", GCA_BASE);
-        let _ = client
+        let opt_resp = client
             .post(&set_url)
             .header("Authorization", format!("Bearer {}", access_token))
             .json(&serde_json::json!({ "freeTierDataCollectionOptin": false }))
             .send()
             .await
             .map_err(|e| LayreamError::Http(e.to_string()))?;
+        if !opt_resp.status().is_success() {
+            eprintln!("[layream] GCA opt-out failed: status {}", opt_resp.status().as_u16());
+        }
         return Ok(true);
     }
 
@@ -200,7 +203,7 @@ pub async fn load_code_assist(
 
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await.unwrap_or_else(|e| format!("(body read failed: {e})"));
         return Err(LayreamError::ApiError { status, body });
     }
 

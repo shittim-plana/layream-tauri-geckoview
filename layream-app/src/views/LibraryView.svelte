@@ -64,6 +64,7 @@
 
   async function refresh(kindId) {
     const k = kindByID(kindId);
+    if (!k) { error = `Unknown kind: ${kindId}`; return; }
     try {
       const items = await invoke(k.list);
       lists[kindId] = Array.isArray(items) ? items : [];
@@ -81,6 +82,7 @@
 
   async function saveCurrent(kindId) {
     const k = kindByID(kindId);
+    if (!k) { error = `Unknown kind: ${kindId}`; return; }
     if (!k.currentLoad) {
       error = `${k.label} have no current slot`;
       return;
@@ -102,6 +104,7 @@
 
   async function loadItem(kindId, id) {
     const k = kindByID(kindId);
+    if (!k) { error = `Unknown kind: ${kindId}`; return; }
     try {
       const data = await invoke(k.load, { id });
       if (k.currentSave && k.currentArgKey) {
@@ -123,6 +126,7 @@
     if (!confirmDelete) return;
     const { kindId, id } = confirmDelete;
     const k = kindByID(kindId);
+    if (!k) { error = `Unknown kind: ${kindId}`; confirmDelete = null; return; }
     confirmDelete = null;
     try {
       await invoke(k.del, { id });

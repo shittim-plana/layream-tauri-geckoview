@@ -142,7 +142,7 @@
 
 <div class="header">
   <h1 style="font-size: 18px; font-weight: 600;">Layream</h1>
-  <span style="font-size: 12px; color: var(--fg3);">v0.3.0</span>
+  <span style="font-size: 12px; color: var(--fg3);">v0.3.1</span>
 </div>
 
 {#if oauthMessage}

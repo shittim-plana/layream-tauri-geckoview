@@ -171,6 +171,8 @@ pub struct LoreBook {
     #[serde(rename = "bookVersion")]
     pub book_version: Option<u32>,
     pub id: Option<String>,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -227,6 +229,8 @@ pub struct RisuModule {
     pub namespace: Option<String>,
     #[serde(rename = "customModuleToggle")]
     pub custom_module_toggle: Option<String>,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 // --- Prompt template items ---
@@ -661,6 +665,8 @@ pub struct CharBookEntry {
     pub position: Option<String>,
     pub case_sensitive: Option<bool>,
     pub use_regex: Option<bool>,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -705,6 +711,8 @@ pub struct RisuAiExtensions {
     #[serde(rename = "newGenData")]
     pub new_gen_data: Option<NewGenData>,
     pub vits: Option<std::collections::HashMap<String, String>>,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -726,6 +734,8 @@ pub struct DepthPrompt {
 pub struct CardExtensions {
     pub risuai: Option<RisuAiExtensions>,
     pub depth_prompt: Option<DepthPrompt>,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -745,6 +755,8 @@ pub struct CharacterCardV2Data {
     pub creator: String,
     pub character_version: String,
     pub extensions: CardExtensions,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -767,6 +779,8 @@ pub struct OldTavernChar {
     pub scenario: String,
     pub talkativeness: String,
     pub spec_version: Option<String>,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 // --- Preset envelope (for .risup format) ---

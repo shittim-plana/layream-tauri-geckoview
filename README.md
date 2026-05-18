@@ -107,13 +107,13 @@ npm run tauri android build -- --apk --target aarch64
 
 ## Status / 상태
 
-**v0.3.0** — [Download APK](https://github.com/shittim-plana/layream/releases/tag/v0.3.0)
+**v0.3.1** — [Download APK](https://github.com/shittim-plana/layream/releases/tag/v0.3.1)
 
-Core library stable (94 tests, 0 production unwrap). Android APK available. Web build planned.
+Core library stable (94 tests, 0 production unwrap). Soundness audit: 21 violations found, 16 fixed. Android APK available. Web build planned.
 
-**v0.3.0** — [APK 다운로드](https://github.com/shittim-plana/layream/releases/tag/v0.3.0)
+**v0.3.1** — [APK 다운로드](https://github.com/shittim-plana/layream/releases/tag/v0.3.1)
 
-코어 라이브러리 안정 (94개 테스트, 프로덕션 unwrap 0개). Android APK 제공. 웹 빌드 예정.
+코어 라이브러리 안정 (94개 테스트, 프로덕션 unwrap 0개). Soundness 감사: 21개 위반 발견, 16개 수정. Android APK 제공. 웹 빌드 예정.
 
 ## License / 라이선스
 

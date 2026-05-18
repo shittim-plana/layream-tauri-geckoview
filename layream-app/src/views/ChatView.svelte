@@ -165,8 +165,10 @@
       // intended position relative to the conversation (§2-D non-commutative).
       let systemPrompt = null;
       let postChatText = "";
+      let loadedPreset = null;
       try {
         const preset = await invoke("cmd_load_current_preset");
+        loadedPreset = preset;
         if (preset?.promptTemplate) {
           const userName = settings.userName || "User";
           let charName = "Character";
@@ -301,7 +303,7 @@
         text: idx === arr.length - 1 && m.role === "user" ? injectedUserMsg : m.text,
       }));
 
-      const maxCtx = preset?.maxContext;
+      const maxCtx = loadedPreset?.maxContext;
       if (maxCtx && maxCtx > 0 && maxCtx !== -1000) {
         const maxChars = maxCtx * 4;
         let total = (systemPrompt?.length || 0) + (postChatText?.length || 0);
@@ -434,37 +436,43 @@
 
   async function regenerateResponse() {
     if (streaming || messages.length === 0) return;
+
+    let savedAlts = [];
+    let savedUserText = "";
+
     const lastMsg = messages[messages.length - 1];
     if (lastMsg.role === "char") {
-      if (!lastMsg.alternatives) lastMsg.alternatives = [];
-      lastMsg.alternatives.push(lastMsg.text);
+      savedAlts = [...(lastMsg.alternatives || []), lastMsg.text];
     }
-    let msgs = [...messages];
-    while (msgs.length > 0 && (msgs[msgs.length - 1].role === "char" || msgs[msgs.length - 1].role === "error")) {
-      msgs.pop();
+
+    let trimmed = [...messages];
+    while (trimmed.length > 0 && (trimmed[trimmed.length - 1].role === "char" || trimmed[trimmed.length - 1].role === "error")) {
+      trimmed.pop();
     }
-    if (msgs.length === 0) return;
-    const lastUser = msgs[msgs.length - 1];
+    if (trimmed.length === 0) return;
+    const lastUser = trimmed[trimmed.length - 1];
     if (lastUser.role !== "user") return;
-    const savedAlts = lastMsg.role === "char" ? lastMsg.alternatives : undefined;
-    msgs.pop();
-    messages = msgs;
+    savedUserText = lastUser.text;
+    trimmed.pop();
+    messages = trimmed;
+
     try {
-      await sendChatMessage(lastUser.text);
-      if (savedAlts && messages.length > 0 && messages[messages.length - 1].role === "char") {
-        messages[messages.length - 1].alternatives = savedAlts;
-        messages = [...messages];
-      }
+      await sendChatMessage(savedUserText);
     } catch (_) {}
+
+    if (savedAlts.length > 0 && messages.length > 0 && messages[messages.length - 1].role === "char") {
+      messages[messages.length - 1].alternatives = savedAlts;
+      messages = [...messages];
+    }
   }
 
   function swipeResponse(msg, direction) {
     if (!msg.alternatives?.length) return;
     const all = [...msg.alternatives, msg.text];
-    const currentIdx = all.length - 1;
-    const newIdx = (currentIdx + direction + all.length) % all.length;
-    msg.alternatives = all.filter((_, i) => i !== newIdx);
+    const currentIdx = all.indexOf(msg.text);
+    let newIdx = (currentIdx + direction + all.length) % all.length;
     msg.text = all[newIdx];
+    msg.alternatives = all.filter(t => t !== msg.text);
     messages = [...messages];
   }
 
@@ -513,10 +521,12 @@
             <button onclick={() => swipeGreeting(1)} aria-label="다음 인사말">▶</button>
           </div>
         {:else if msg.role === "char" && msg.alternatives?.length}
+          {@const total = msg.alternatives.length + 1}
+          {@const current = msg.alternatives.indexOf(msg.text) === -1 ? total : msg.alternatives.indexOf(msg.text) + 1}
           <div class="swipe-nav">
-            <button onclick={() => swipeResponse(msg, -1)} aria-label="이전 응답">◀</button>
-            <span>{(msg.alternatives.length)}/{msg.alternatives.length + 1}</span>
-            <button onclick={() => swipeResponse(msg, 1)} aria-label="다음 응답">▶</button>
+            <button onclick={() => swipeResponse(msg, -1)} disabled={streaming} aria-label="이전 응답">◀</button>
+            <span>{current}/{total}</span>
+            <button onclick={() => swipeResponse(msg, 1)} disabled={streaming} aria-label="다음 응답">▶</button>
           </div>
         {/if}
       </div>

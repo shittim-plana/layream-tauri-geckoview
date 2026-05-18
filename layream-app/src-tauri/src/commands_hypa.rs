@@ -219,6 +219,8 @@ async fn invoke_provider(
         thinking_config: None,
         top_p,
         top_k,
+        frequency_penalty: None,
+        presence_penalty: None,
         response_mime_type: None,
         response_schema: None,
     };

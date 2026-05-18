@@ -48,6 +48,8 @@
     top_p: undefined,
     top_k: undefined,
     max_tokens: 8192,
+    frequency_penalty: undefined,
+    presence_penalty: undefined,
     use_stream: true,
     thinking_level: "none",
     tools_google_search: false,
@@ -589,6 +591,17 @@
       <div class="field">
         <label class="label">Max Output Tokens</label>
         <input class="input" type="number" bind:value={gcaConfig.max_tokens} onchange={scheduleSettingsSave} />
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+        <div class="field">
+          <label class="label">Frequency Penalty</label>
+          <input class="input" type="number" step="0.1" bind:value={gcaConfig.frequency_penalty} placeholder="0" onchange={scheduleSettingsSave} />
+        </div>
+        <div class="field">
+          <label class="label">Presence Penalty</label>
+          <input class="input" type="number" step="0.1" bind:value={gcaConfig.presence_penalty} placeholder="0" onchange={scheduleSettingsSave} />
+        </div>
       </div>
 
       <div class="toggle-row">

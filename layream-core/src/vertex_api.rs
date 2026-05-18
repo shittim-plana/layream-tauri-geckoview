@@ -67,6 +67,10 @@ pub struct GenerationConfig {
     pub top_p: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_k: Option<u32>,
+    #[serde(rename = "frequencyPenalty", skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<f64>,
+    #[serde(rename = "presencePenalty", skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<f64>,
     #[serde(rename = "responseMimeType", skip_serializing_if = "Option::is_none")]
     pub response_mime_type: Option<String>,
     #[serde(rename = "responseSchema", skip_serializing_if = "Option::is_none")]
@@ -442,6 +446,8 @@ mod tests {
             thinking_config: None,
             top_p: None,
             top_k: None,
+            frequency_penalty: None,
+            presence_penalty: None,
             response_mime_type: None,
             response_schema: None,
         };
@@ -458,6 +464,8 @@ mod tests {
             thinking_config: None,
             top_p: None,
             top_k: None,
+            frequency_penalty: None,
+            presence_penalty: None,
             response_mime_type: Some("application/json".into()),
             response_schema: Some(serde_json::json!({
                 "type": "object",

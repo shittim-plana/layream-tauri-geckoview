@@ -343,25 +343,33 @@ fn build_safety_settings() -> Vec<SafetySetting> {
 }
 
 fn messages_to_contents(messages: &[Value]) -> Vec<Content> {
-    messages.iter().filter_map(|m| {
-        let role = m.get("role")?.as_str()?;
-        let text = m.get("text")?.as_str()?;
-        let api_role = match role { "char" => "model", _ => role };
+    messages.iter().enumerate().filter_map(|(i, m)| {
+        let role = m.get("role").and_then(|v| v.as_str());
+        let text = m.get("text").and_then(|v| v.as_str());
+        if role.is_none() || text.is_none() {
+            log::warn!("messages_to_contents: skipping message[{i}] — missing role or text");
+            return None;
+        }
+        let api_role = match role.unwrap() { "char" => "model", r => r };
         Some(Content {
             role: api_role.to_string(),
-            parts: vec![Part { text: Some(text.to_string()), thought: None, inline_data: None }],
+            parts: vec![Part { text: Some(text.unwrap().to_string()), thought: None, inline_data: None }],
         })
     }).collect()
 }
 
 fn messages_to_chat_messages(messages: &[Value]) -> Vec<mistral::ChatMessage> {
-    messages.iter().filter_map(|m| {
-        let role = m.get("role")?.as_str()?;
-        let text = m.get("text")?.as_str()?;
-        let mistral_role = match role { "model" | "char" => "assistant", _ => role };
+    messages.iter().enumerate().filter_map(|(i, m)| {
+        let role = m.get("role").and_then(|v| v.as_str());
+        let text = m.get("text").and_then(|v| v.as_str());
+        if role.is_none() || text.is_none() {
+            log::warn!("messages_to_chat_messages: skipping message[{i}] — missing role or text");
+            return None;
+        }
+        let mistral_role = match role.unwrap() { "model" | "char" => "assistant", r => r };
         Some(mistral::ChatMessage {
             role: mistral_role.to_string(),
-            content: text.to_string(),
+            content: text.unwrap().to_string(),
             tool_calls: None,
             tool_call_id: None,
         })

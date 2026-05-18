@@ -269,7 +269,7 @@
       if (projectId) gcaServiceTier = `Project: ${projectId}`;
       const optOut = await invoke("gca_check_opt_out");
       gcaOptOut = optOut;
-    } catch (e) { console.warn("GCA profile load failed:", e); }
+    } catch (e) { console.error("GCA profile load failed:", e); dbg(`GCA profile error: ${e}`); }
   }
 
   function exportGcaConfig() {
@@ -316,7 +316,7 @@
       if (result?.length) {
         mistralModels = result.map(m => m.id);
       }
-    } catch (e) { console.warn("Failed to fetch Mistral models:", e); }
+    } catch (e) { console.error("Failed to fetch Mistral models:", e); dbg(`Mistral fetch error: ${e}`); }
     mistralFetching = false;
   }
 
@@ -339,7 +339,7 @@
         const existing = await invoke("cmd_load_settings") || {};
         const merged = { ...existing, ...collectSettings() };
         await invoke("cmd_save_settings", { settings: merged });
-      } catch (e) { console.warn("Failed to save settings:", e); }
+      } catch (e) { console.error("Failed to save settings:", e); dbg(`Settings save error: ${e}`); }
     }, 500);
   }
 
@@ -378,7 +378,7 @@
     try {
       const saved = await invoke("cmd_load_settings");
       applySettings(saved);
-    } catch (e) { console.warn("Failed to load settings:", e); }
+    } catch (e) { console.error("Failed to load settings:", e); dbg(`Settings load error: ${e}`); }
     checkVertexStatus();
     await checkGcaStatus();
     if (gcaStatus?.connected && !gcaStatus?.expired) {

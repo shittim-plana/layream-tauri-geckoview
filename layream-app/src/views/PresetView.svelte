@@ -54,7 +54,7 @@
         presetName = name;
         editingIndex = -1;
         error = "";
-        invoke("cmd_save_current_preset", { preset: result }).catch(e => console.warn("Auto-save:", e));
+        invoke("cmd_save_current_preset", { preset: result }).catch(e => { console.error("Auto-save failed:", e); status = "Auto-save failed"; });
       } else {
         error = "load_preset returned null/undefined";
       }
@@ -153,14 +153,14 @@
         presetName = saved.name || "Saved Preset";
       }
     } catch (e) {
-      console.warn("Load preset failed:", e);
+      console.error("Load preset failed:", e);
     }
     try {
       const ch = await invoke("cmd_load_current_character");
       const cardName = ch?.card?.data?.name || ch?.card?.name;
       if (typeof cardName === "string" && cardName.length > 0) charName = cardName;
     } catch (e) {
-      console.warn("Load character for CBS preview failed:", e);
+      console.error("Load character for CBS preview failed:", e);
     }
     try {
       const settings = await invoke("cmd_load_settings");
@@ -168,7 +168,7 @@
         userName = settings.userName;
       }
     } catch (e) {
-      console.warn("Load settings for CBS preview failed:", e);
+      console.error("Load settings for CBS preview failed:", e);
     }
   });
 </script>

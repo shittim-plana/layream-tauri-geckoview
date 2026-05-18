@@ -44,7 +44,7 @@
       }
       hypaSettingsLoaded = true;
     } catch (e) {
-      console.warn("Failed to load HyPA settings:", e);
+      console.error("Failed to load HyPA settings:", e);
       hypaSettingsLoaded = true;
     }
     onReady?.({
@@ -68,7 +68,7 @@
         await Promise.all([flushSettingsSave(), saveHypa()]);
       });
     } catch (e) {
-      console.warn("HypaView app-flush listener unavailable:", e);
+      console.error("HypaView app-flush listener unavailable:", e);
     }
   });
 
@@ -93,7 +93,7 @@
         similarRatio: hypaSimilarRatio,
       };
       await invoke("cmd_save_settings", { settings: existing });
-    } catch (e) { console.warn("Failed to save HyPA settings:", e); }
+    } catch (e) { console.error("Failed to save HyPA settings:", e); }
   }
 
   function scheduleHypaSettingsSave() {
@@ -119,7 +119,7 @@
       const data = await invoke("hypa_load_all");
       hypaSummaries = data?.summaries || [];
       hypaMemoryCount = hypaSummaries.length;
-    } catch (e) { console.warn("Failed to load HyPA:", e); }
+    } catch (e) { console.error("Failed to load HyPA:", e); }
   }
 
   async function saveHypa() {
@@ -128,7 +128,7 @@
       // full hypa.json object (containing `summaries` key) so the file is
       // overwritten atomically. Outer key matches the Rust parameter name.
       await invoke("hypa_save_all", { summaries: { summaries: hypaSummaries } });
-    } catch (e) { console.warn("Failed to save HyPA:", e); }
+    } catch (e) { console.error("Failed to save HyPA:", e); }
   }
 
   function exportHypa() {
@@ -229,7 +229,7 @@
       setTimeout(() => { hypaActionStatus = ""; }, STATUS_CLEAR_MS);
       return;
     } catch (e) {
-      console.warn("hypa_cleanup failed, doing local cleanup:", e);
+      console.error("hypa_cleanup failed, doing local cleanup:", e);
     }
     // Fallback: drop locally-empty summaries (chatMemos empty).
     const before = hypaSummaries.length;
@@ -306,7 +306,7 @@
       });
       return Array.isArray(results) ? results : [];
     } catch (e) {
-      console.warn("hypa_search failed:", e);
+      console.error("hypa_search failed:", e);
       return [];
     }
   }

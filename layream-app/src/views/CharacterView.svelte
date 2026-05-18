@@ -82,7 +82,7 @@
         character = result;
         characterName = name;
         error = "";
-        invoke("cmd_save_current_character", { character: { card: result.card, characterName: name, assetList: result.assetList, hasModule: result.hasModule } }).catch(e => console.warn("Auto-save:", e));
+        invoke("cmd_save_current_character", { character: { card: result.card, characterName: name, assetList: result.assetList, hasModule: result.hasModule } }).catch(e => console.error("Auto-save:", e));
       } else {
         error = "load_character returned null/undefined";
       }
@@ -154,7 +154,7 @@
         character = saved;
         characterName = saved.characterName || "Saved Character";
       }
-    } catch (e) { console.warn("Load character failed:", e); }
+    } catch (e) { console.error("Load character failed:", e); }
   });
 </script>
 

@@ -19,7 +19,7 @@
   async function loadLogs() {
     try {
       requestLogs = await invoke("get_request_logs") || [];
-    } catch (e) { console.warn("Failed to load logs:", e); }
+    } catch (e) { console.error("Failed to load logs:", e); }
   }
 
   async function clearLogs() {
@@ -27,7 +27,7 @@
       await invoke("clear_request_logs");
       requestLogs = [];
       selectedLog = null;
-    } catch (e) { console.warn("Failed to clear logs:", e); }
+    } catch (e) { console.error("Failed to clear logs:", e); }
   }
 
   // --- Prompt Preview ---

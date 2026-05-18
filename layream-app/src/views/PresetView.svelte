@@ -349,8 +349,8 @@
           {/if}
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
             <div class="field">
-              <label class="label">Temperature</label>
-              <input class="input" type="number" step="0.1" bind:value={preset.temperature} />
+              <label class="label">Temperature ({preset.temperature != null ? (preset.temperature / 100).toFixed(2) : ""})</label>
+              <input class="input" type="number" step="1" bind:value={preset.temperature} />
             </div>
             <div class="field">
               <label class="label">Max Context</label>
@@ -406,6 +406,35 @@
                 oninput={(e) => preset.thinkingTokens = parseParam(e.target.value)} />
             </div>
           </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Custom Flags</span></div>
+        <div class="card-body">
+          <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+            <input type="checkbox" bind:checked={preset.enableCustomFlags} />
+            Enable Custom Flags
+          </label>
+          {#if preset.enableCustomFlags}
+            <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+              {#each ["hasImageInput","hasImageOutput","hasAudioInput","hasAudioOutput","hasPrefill","hasCache","hasFullSystemPrompt","hasFirstSystemPrompt","hasStreaming","requiresAlternateRole","mustStartWithUserInput","poolSupported","hasVideoInput","OAICompletionTokens","DeveloperRole","geminiThinking","geminiBlockOff","deepSeekPrefix","deepSeekThinkingInput","deepSeekThinkingOutput","noCivilIntegrity","claudeThinking"] as flag}
+                <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 6px; background: var(--bg2); border-radius: 4px;">
+                  <input type="checkbox"
+                    checked={preset.customFlags?.includes(flag)}
+                    onchange={(e) => {
+                      if (!preset.customFlags) preset.customFlags = [];
+                      if (e.target.checked) {
+                        preset.customFlags = [...preset.customFlags, flag];
+                      } else {
+                        preset.customFlags = preset.customFlags.filter(f => f !== flag);
+                      }
+                    }} />
+                  {flag}
+                </label>
+              {/each}
+            </div>
+          {/if}
         </div>
       </div>
 

@@ -638,7 +638,7 @@ pub struct BotPreset {
     #[serde(rename = "enableCustomFlags")]
     pub enable_custom_flags: Option<bool>,
     #[serde(rename = "customFlags")]
-    pub custom_flags: Option<Vec<u32>>,
+    pub custom_flags: Option<Vec<serde_json::Value>>,
     pub image: Option<String>,
     #[serde(rename = "reasonEffort")]
     pub reason_effort: Option<f64>,

@@ -342,6 +342,32 @@ pub struct PromptSettings {
     pub max_thought_tag_depth: Option<i32>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SeparateParameters {
+    pub temperature: Option<f64>,
+    pub top_k: Option<f64>,
+    pub repetition_penalty: Option<f64>,
+    pub min_p: Option<f64>,
+    pub top_a: Option<f64>,
+    pub top_p: Option<f64>,
+    pub frequency_penalty: Option<f64>,
+    pub presence_penalty: Option<f64>,
+    pub reasoning_effort: Option<f64>,
+    pub thinking_tokens: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SeparateParametersSet {
+    #[serde(default)]
+    pub memory: SeparateParameters,
+    #[serde(default)]
+    pub emotion: SeparateParameters,
+    #[serde(default)]
+    pub translate: SeparateParameters,
+    #[serde(rename = "otherAx", default)]
+    pub other_ax: SeparateParameters,
+}
+
 // --- Settings types ---
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -628,13 +654,30 @@ pub struct BotPreset {
     #[serde(rename = "groupOtherBotRole")]
     pub group_other_bot_role: Option<String>,
     #[serde(rename = "customAPIFormat")]
-    pub custom_api_format: Option<u32>,
+    pub custom_api_format: Option<serde_json::Value>,
     #[serde(rename = "systemContentReplacement")]
     pub system_content_replacement: Option<String>,
     #[serde(rename = "systemRoleReplacement")]
     pub system_role_replacement: Option<String>,
     #[serde(rename = "openAIPrediction")]
     pub openai_prediction: Option<String>,
+    #[serde(rename = "seperateParametersEnabled")]
+    pub separate_parameters_enabled: Option<bool>,
+    #[serde(rename = "seperateParameters")]
+    pub separate_parameters: Option<SeparateParametersSet>,
+    #[serde(rename = "seperateModelsForAxModels")]
+    pub separate_models_for_ax: Option<bool>,
+    #[serde(rename = "seperateModels")]
+    pub separate_models: Option<serde_json::Value>,
+    #[serde(rename = "fallbackModels")]
+    pub fallback_models: Option<serde_json::Value>,
+    #[serde(rename = "fallbackWhenBlankResponse")]
+    pub fallback_when_blank: Option<bool>,
+    pub verbosity: Option<i32>,
+    #[serde(rename = "modelTools")]
+    pub model_tools: Option<Vec<String>>,
+    #[serde(rename = "dynamicOutput")]
+    pub dynamic_output: Option<serde_json::Value>,
     #[serde(rename = "enableCustomFlags")]
     pub enable_custom_flags: Option<bool>,
     #[serde(rename = "customFlags")]

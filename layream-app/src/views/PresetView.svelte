@@ -417,11 +417,18 @@
             Enable Custom Flags
           </label>
           {#if preset.enableCustomFlags}
+            {@const FLAG_NAMES = ["hasImageInput","hasImageOutput","hasAudioInput","hasAudioOutput","hasPrefill","hasCache","hasFullSystemPrompt","hasFirstSystemPrompt","hasStreaming","requiresAlternateRole","mustStartWithUserInput","poolSupported","hasVideoInput","OAICompletionTokens","DeveloperRole","geminiThinking","geminiBlockOff","deepSeekPrefix","deepSeekThinkingInput","deepSeekThinkingOutput","noCivilIntegrity","claudeThinking"]}
+            {@const displayFlags = Array.isArray(preset.customFlags) ? preset.customFlags.map(f => typeof f === "number" ? (FLAG_NAMES[f] || `#${f}`) : f) : []}
             <textarea class="textarea" rows="4"
-              placeholder="한 줄에 하나씩 플래그 이름 입력&#10;예: hasPrefill&#10;geminiThinking&#10;hasStreaming"
-              value={Array.isArray(preset.customFlags) ? preset.customFlags.join("\n") : ""}
+              placeholder="한 줄에 하나씩 플래그 입력&#10;예: hasPrefill&#10;geminiThinking&#10;hasStreaming"
+              value={displayFlags.join("\n")}
               oninput={(e) => {
-                preset.customFlags = e.target.value.split("\n").map(s => s.trim()).filter(Boolean);
+                preset.customFlags = e.target.value.split("\n").map(s => s.trim()).filter(Boolean).map(s => {
+                  const idx = FLAG_NAMES.indexOf(s);
+                  const originals = preset.customFlags || [];
+                  const hasNumbers = originals.some(f => typeof f === "number");
+                  return hasNumbers && idx >= 0 ? idx : s;
+                });
               }}
             ></textarea>
             <p style="font-size: 11px; color: var(--fg3); margin-top: 4px;">

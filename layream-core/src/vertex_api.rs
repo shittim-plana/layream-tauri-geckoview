@@ -109,7 +109,6 @@ pub fn default_safety_settings() -> Vec<SafetySetting> {
         "HARM_CATEGORY_HARASSMENT",
         "HARM_CATEGORY_DANGEROUS_CONTENT",
         "HARM_CATEGORY_CIVIC_INTEGRITY",
-        "HARM_CATEGORY_CHILD_SAFETY",
     ]
     .iter()
     .map(|cat| SafetySetting {

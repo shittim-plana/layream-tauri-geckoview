@@ -66,6 +66,7 @@ class MainActivity : TauriActivity() {
     geckoView = view
 
     val container = FrameLayout(this)
+    container.fitsSystemWindows = true
     container.addView(view, FrameLayout.LayoutParams(
       FrameLayout.LayoutParams.MATCH_PARENT,
       FrameLayout.LayoutParams.MATCH_PARENT

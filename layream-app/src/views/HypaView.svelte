@@ -154,19 +154,31 @@
       // 1. { summaries: [...] } — Layream export / RisuAI SerializableHypaV3Data
       // 2. bare array [...]
       // 3. { hypaV3Data: { summaries: [...] } } — RisuAI chat export wrapper
+      // Try summaries extraction
       const items = data?.summaries
         ?? (Array.isArray(data) ? data : null)
         ?? data?.hypaV3Data?.summaries
         ?? data?.memory?.summaries
         ?? data?.hypaV3Data?.memory?.summaries
+        ?? data?.data?.summaries
         ?? null;
+      // Try HyPA settings preset import ({ type: "risu", data: { settings } })
+      const settingsImport = data?.data?.settings || data?.settings || null;
       if (items && Array.isArray(items)) {
         hypaSummaries = items;
         hypaMemoryCount = hypaSummaries.length;
         await saveHypa();
         hypaImportStatus = `imported ${hypaSummaries.length} summaries`;
+      } else if (settingsImport) {
+        if (settingsImport.summarizationModel) hypaSummaryModel = settingsImport.summarizationModel === "subModel" ? "" : settingsImport.summarizationModel;
+        if (settingsImport.summarizationPrompt) hypaSummaryPrompt = settingsImport.summarizationPrompt;
+        if (settingsImport.maxChatsPerSummary) hypaSummaryUnit = settingsImport.maxChatsPerSummary;
+        if (settingsImport.similarMemoryRatio != null) hypaSimilarRatio = settingsImport.similarMemoryRatio;
+        scheduleHypaSettingsSave();
+        const name = data?.data?.name || "imported";
+        hypaImportStatus = `HyPA 설정 "${name}" 임포트 완료`;
       } else {
-        hypaImportStatus = `invalid format — expected { summaries: [...] }, [...], or { hypaV3Data: { summaries: [...] } }`;
+        hypaImportStatus = `invalid format — summaries 또는 HyPA 설정을 찾을 수 없습니다`;
       }
     } catch (e) { hypaImportStatus = `import error: ${e}`; }
     setTimeout(() => { hypaImportStatus = ""; }, STATUS_CLEAR_MS);

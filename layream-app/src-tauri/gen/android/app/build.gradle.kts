@@ -20,7 +20,10 @@ android {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "com.shittimplana.layream"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 34
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }
@@ -58,6 +61,10 @@ rust {
     rootDirRel = "../../../"
 }
 
+repositories {
+    maven { url = uri("https://maven.mozilla.org/maven2") }
+}
+
 dependencies {
     implementation("androidx.browser:browser:1.8.0")
     implementation("androidx.webkit:webkit:1.14.0")
@@ -65,6 +72,7 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.lifecycle:lifecycle-process:2.10.0")
+    implementation("org.mozilla.geckoview:geckoview-arm64-v8a:128.0.20240725162350")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.4")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")

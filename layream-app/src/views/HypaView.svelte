@@ -49,10 +49,7 @@
     }
     onReady?.({
       loadHypa,
-      // Helper API exported for ChatView wiring (post-merge concern).
-      // These wrap the new hypa_* commands which are todo!() stubs at this
-      // point — callers must tolerate failure (caught here, logged, returns
-      // graceful fallback). Names mirror commands_hypa.rs.
+      loadAll,
       triggerSummarizationIfNeeded,
       getRagContext,
     });
@@ -110,6 +107,11 @@
       scheduleHypaSettingsSave();
     }
   });
+
+  async function loadAll() {
+    await loadHypa();
+    return hypaSummaries;
+  }
 
   async function loadHypa() {
     try {

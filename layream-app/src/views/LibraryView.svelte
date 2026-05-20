@@ -2,6 +2,51 @@
   import { onMount } from "svelte";
   import { invoke } from "../lib/tauri.js";
 
+  // --- Module activation state ---
+  let enabledModules = $state([]);   // string[] of active module IDs
+
+  async function loadEnabledModules() {
+    try {
+      const s = await invoke("cmd_load_settings") || {};
+      enabledModules = Array.isArray(s.enabledModules) ? s.enabledModules : [];
+    } catch (_) {
+      enabledModules = [];
+    }
+  }
+
+  let saveModulesTimeout;
+  function scheduleModulesSave() {
+    clearTimeout(saveModulesTimeout);
+    saveModulesTimeout = setTimeout(async () => {
+      try {
+        const existing = await invoke("cmd_load_settings") || {};
+        await invoke("cmd_save_settings", {
+          settings: { ...existing, enabledModules },
+        });
+      } catch (e) {
+        error = `모듈 설정 저장 실패: ${String(e)}`;
+      }
+    }, 500);
+  }
+
+  function isModuleEnabled(moduleId) {
+    return enabledModules.includes(moduleId);
+  }
+
+  function toggleModule(moduleId, event) {
+    event.stopPropagation();
+    if (enabledModules.includes(moduleId)) {
+      enabledModules = enabledModules.filter(id => id !== moduleId);
+    } else {
+      enabledModules = [...enabledModules, moduleId];
+    }
+    scheduleModulesSave();
+  }
+
+  function enabledModuleCount() {
+    return lists.modules.filter(m => enabledModules.includes(m.id)).length;
+  }
+
   // Three kinds — same shape, different commands.
   // Keeping the kind metadata in one table so the loop body stays generic.
   const KINDS = [
@@ -178,7 +223,10 @@
     loadItem(kindId, item.id);
   }
 
-  onMount(refreshAll);
+  onMount(() => {
+    refreshAll();
+    loadEnabledModules();
+  });
 </script>
 
 <div>
@@ -206,7 +254,12 @@
     <div style:display={activeKind === k.id ? "block" : "none"}>
       <div class="card">
         <div class="card-header">
-          <span class="card-title">{k.label} ({lists[k.id].length})</span>
+          <span class="card-title">
+            {k.label} ({lists[k.id].length})
+            {#if k.id === "modules" && enabledModuleCount() > 0}
+              <span style="font-size: 11px; color: var(--green); margin-left: 6px;">활성 {enabledModuleCount()}개</span>
+            {/if}
+          </span>
           <div style="display: flex; gap: 6px;">
             {#if k.currentLoad}
               <button class="btn btn-sm btn-primary" onclick={() => saveCurrent(k.id)}>
@@ -234,23 +287,43 @@
         {:else}
           <ul class="prompt-list">
             {#each lists[k.id] as item (item.id)}
-              <li class="prompt-item" style="padding: 0;">
-                <button
-                  type="button"
-                  onclick={() => clickRow(k.id, item)}
-                  ontouchstart={() => startPress(k.id, item)}
-                  ontouchend={() => endPress(k.id, item)}
-                  ontouchcancel={() => endPress(k.id, item)}
-                  onmousedown={() => startPress(k.id, item)}
-                  onmouseup={() => endPress(k.id, item)}
-                  onmouseleave={() => endPress(k.id, item)}
-                  oncontextmenu={(e) => { e.preventDefault(); askDelete(k.id, item.id, item.name); }}
-                  onkeydown={(e) => { if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); askDelete(k.id, item.id, item.name); } }}
-                  style="display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 10px 14px; background: transparent; border: 0; color: inherit; text-align: left; cursor: pointer; font: inherit;"
-                >
-                  <span style="font-size: 14px; color: var(--fg1); word-break: break-all;">{item.name}</span>
-                  <span style="font-size: 11px; color: var(--fg3);">{formatTime(item.created_at)}</span>
-                </button>
+              <li class="prompt-item" style="padding: 0; {k.id === 'modules' && isModuleEnabled(item.id) ? 'border-left: 3px solid var(--green);' : ''}">
+                <div style="display: flex; align-items: center; width: 100%;">
+                  {#if k.id === "modules"}
+                    <label
+                      style="display: flex; align-items: center; padding: 10px 0 10px 12px; cursor: pointer; flex-shrink: 0;"
+                      onclick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isModuleEnabled(item.id)}
+                        onchange={(e) => toggleModule(item.id, e)}
+                        style="width: 16px; height: 16px; accent-color: var(--green); cursor: pointer;"
+                      />
+                    </label>
+                  {/if}
+                  <button
+                    type="button"
+                    onclick={() => clickRow(k.id, item)}
+                    ontouchstart={() => startPress(k.id, item)}
+                    ontouchend={() => endPress(k.id, item)}
+                    ontouchcancel={() => endPress(k.id, item)}
+                    onmousedown={() => startPress(k.id, item)}
+                    onmouseup={() => endPress(k.id, item)}
+                    onmouseleave={() => endPress(k.id, item)}
+                    oncontextmenu={(e) => { e.preventDefault(); askDelete(k.id, item.id, item.name); }}
+                    onkeydown={(e) => { if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); askDelete(k.id, item.id, item.name); } }}
+                    style="display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 10px 14px; {k.id === 'modules' ? 'padding-left: 6px;' : ''} background: transparent; border: 0; color: inherit; text-align: left; cursor: pointer; font: inherit;"
+                  >
+                    <span style="font-size: 14px; color: var(--fg1); word-break: break-all;">
+                      {item.name}
+                      {#if k.id === "modules" && isModuleEnabled(item.id)}
+                        <span style="font-size: 10px; color: var(--green); margin-left: 4px;">●</span>
+                      {/if}
+                    </span>
+                    <span style="font-size: 11px; color: var(--fg3);">{formatTime(item.created_at)}</span>
+                  </button>
+                </div>
               </li>
             {/each}
           </ul>

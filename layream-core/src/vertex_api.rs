@@ -301,7 +301,7 @@ pub async fn list_models(
         }
     }
     if models.is_empty() {
-        eprintln!("[layream] list_models: no models found in response. Keys: {:?}",
+        log::warn!("list_models: no models found in response. Keys: {:?}",
             body.as_object().map(|o| o.keys().collect::<Vec<_>>()));
     }
     models.sort();

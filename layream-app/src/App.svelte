@@ -7,6 +7,7 @@
   import LibraryView from "./views/LibraryView.svelte";
   import TestView from "./views/TestView.svelte";
   import SettingsView from "./views/SettingsView.svelte";
+  import WorkspaceSelector from "./components/WorkspaceSelector.svelte";
 
   // Event name for broadcasting flush-on-close to all views.
   // Views (ChatView, HypaView, etc.) listen for this and persist pending state.
@@ -141,8 +142,11 @@
 </script>
 
 <div class="header">
-  <h1 style="font-size: 18px; font-weight: 600;">Layream</h1>
-  <span style="font-size: 12px; color: var(--fg3);">v0.3.1</span>
+  <div style="display: flex; align-items: center; gap: 10px;">
+    <h1 style="font-size: 18px; font-weight: 600;">Layream</h1>
+    <span style="font-size: 12px; color: var(--fg3);">v0.3.1</span>
+  </div>
+  <WorkspaceSelector />
 </div>
 
 {#if oauthMessage}

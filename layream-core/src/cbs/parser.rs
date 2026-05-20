@@ -290,9 +290,9 @@ fn evaluate_when_condition(statement: &mut Vec<String>, ctx: &mut CbsContext, de
     }
 
     while statement.len() >= 3 {
-        let right = statement.pop().expect("len >= 3");
-        let op = statement.pop().expect("len >= 3");
-        let left = statement.pop().expect("len >= 3");
+        let (Some(right), Some(op), Some(left)) = (statement.pop(), statement.pop(), statement.pop()) else {
+            return false;
+        };
 
         let op_lower = op.to_lowercase();
         let result = match op_lower.as_str() {
@@ -383,8 +383,9 @@ fn evaluate_when_condition(statement: &mut Vec<String>, ctx: &mut CbsContext, de
     }
 
     if statement.len() == 2 {
-        let right = statement.pop().expect("len == 2");
-        let op = statement.pop().expect("len == 2");
+        let (Some(right), Some(op)) = (statement.pop(), statement.pop()) else {
+            return false;
+        };
         let op_lower = op.to_lowercase();
         match op_lower.as_str() {
             "not" => {
@@ -886,7 +887,7 @@ fn to_rpn(tokens: &[Token]) -> Vec<Token> {
             Token::Op(op) => {
                 while let Some(Token::Op(top)) = ops.last() {
                     if precedence(*top) >= precedence(*op) {
-                        output.push(ops.pop().expect("ops.last() was Some"));
+                        if let Some(op) = ops.pop() { output.push(op); }
                     } else {
                         break;
                     }
@@ -900,7 +901,7 @@ fn to_rpn(tokens: &[Token]) -> Vec<Token> {
                         ops.pop();
                         break;
                     }
-                    output.push(ops.pop().expect("ops.last() was Some"));
+                    if let Some(op) = ops.pop() { output.push(op); }
                 }
             }
         }

@@ -62,12 +62,12 @@ where
                 last_err = Some(LayreamError::ApiError { status, body });
 
                 if attempt < MAX_RETRIES {
-                    eprintln!("[layream] retry {}/{}: status {}", attempt + 1, MAX_RETRIES, status);
+                    log::warn!("retry {}/{}: status {}", attempt + 1, MAX_RETRIES, status);
                     tokio::time::sleep(delay).await;
                 }
             }
             Err(e) if is_retryable(&e) && attempt < MAX_RETRIES => {
-                eprintln!("[layream] retry {}/{}: {}", attempt + 1, MAX_RETRIES, e);
+                log::warn!("retry {}/{}: {}", attempt + 1, MAX_RETRIES, e);
                 let delay = BASE_DELAY * 2u32.pow(attempt);
                 tokio::time::sleep(delay).await;
                 last_err = Some(e);

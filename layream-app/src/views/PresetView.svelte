@@ -417,23 +417,16 @@
             Enable Custom Flags
           </label>
           {#if preset.enableCustomFlags}
-            <div style="display: flex; flex-wrap: wrap; gap: 6px;">
-              {#each ["hasImageInput","hasImageOutput","hasAudioInput","hasAudioOutput","hasPrefill","hasCache","hasFullSystemPrompt","hasFirstSystemPrompt","hasStreaming","requiresAlternateRole","mustStartWithUserInput","poolSupported","hasVideoInput","OAICompletionTokens","DeveloperRole","geminiThinking","geminiBlockOff","deepSeekPrefix","deepSeekThinkingInput","deepSeekThinkingOutput","noCivilIntegrity","claudeThinking"] as flag}
-                <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 6px; background: var(--bg2); border-radius: 4px;">
-                  <input type="checkbox"
-                    checked={preset.customFlags?.includes(flag)}
-                    onchange={(e) => {
-                      if (!preset.customFlags) preset.customFlags = [];
-                      if (e.target.checked) {
-                        preset.customFlags = [...preset.customFlags, flag];
-                      } else {
-                        preset.customFlags = preset.customFlags.filter(f => f !== flag);
-                      }
-                    }} />
-                  {flag}
-                </label>
-              {/each}
-            </div>
+            <textarea class="textarea" rows="4"
+              placeholder="한 줄에 하나씩 플래그 이름 입력&#10;예: hasPrefill&#10;geminiThinking&#10;hasStreaming"
+              value={Array.isArray(preset.customFlags) ? preset.customFlags.join("\n") : ""}
+              oninput={(e) => {
+                preset.customFlags = e.target.value.split("\n").map(s => s.trim()).filter(Boolean);
+              }}
+            ></textarea>
+            <p style="font-size: 11px; color: var(--fg3); margin-top: 4px;">
+              {preset.customFlags?.length || 0}개 플래그 설정됨
+            </p>
           {/if}
         </div>
       </div>
@@ -460,38 +453,54 @@
 
       {#if preset.promptSettings}
       <div class="card">
-        <div class="card-header"><span class="card-title">Prompt Settings</span></div>
+        <div class="card-header"><span class="card-title">프롬프트 설정</span></div>
         <div class="card-body">
           <div class="field">
-            <label class="label">Assistant Prefill</label>
-            <textarea class="textarea" rows="2" bind:value={preset.promptSettings.assistantPrefill}></textarea>
+            <label class="label">응답 시작 텍스트 (Prefill)</label>
+            <p style="font-size: 11px; color: var(--fg3); margin: 0 0 4px;">AI 응답의 첫 부분을 미리 채워넣습니다</p>
+            <textarea class="textarea" rows="2" bind:value={preset.promptSettings.assistantPrefill} placeholder="예: (내면의 생각을 정리하며)"></textarea>
           </div>
           <div class="field">
-            <label class="label">Post End Inner Format</label>
-            <input class="input" type="text" bind:value={preset.promptSettings.postEndInnerFormat} />
+            <label class="label">프롬프트 종결 형식</label>
+            <p style="font-size: 11px; color: var(--fg3); margin: 0 0 4px;">프롬프트 마지막에 추가되는 형식 문자열</p>
+            <input class="input" type="text" bind:value={preset.promptSettings.postEndInnerFormat} placeholder="비어있으면 기본값" />
           </div>
-          <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
-            <label style="display: flex; align-items: center; gap: 8px;">
-              <input type="checkbox" bind:checked={preset.promptSettings.sendChatAsSystem} />
-              Send Chat As System
+          <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 12px;">
+            <label style="display: flex; align-items: flex-start; gap: 8px;">
+              <input type="checkbox" style="margin-top: 3px;" bind:checked={preset.promptSettings.sendChatAsSystem} />
+              <span>
+                <span style="font-size: 13px;">채팅을 시스템 메시지로 전송</span>
+                <span style="display: block; font-size: 11px; color: var(--fg3);">대화 내역을 user/assistant 대신 system role로 보냅니다</span>
+              </span>
             </label>
-            <label style="display: flex; align-items: center; gap: 8px;">
-              <input type="checkbox" bind:checked={preset.promptSettings.sendName} />
-              Send Name
+            <label style="display: flex; align-items: flex-start; gap: 8px;">
+              <input type="checkbox" style="margin-top: 3px;" bind:checked={preset.promptSettings.sendName} />
+              <span>
+                <span style="font-size: 13px;">메시지에 이름 포함</span>
+                <span style="display: block; font-size: 11px; color: var(--fg3);">각 메시지에 캐릭터/사용자 이름을 추가합니다</span>
+              </span>
             </label>
-            <label style="display: flex; align-items: center; gap: 8px;">
-              <input type="checkbox" bind:checked={preset.promptSettings.utilOverride} />
-              Util Override
+            <label style="display: flex; align-items: flex-start; gap: 8px;">
+              <input type="checkbox" style="margin-top: 3px;" bind:checked={preset.promptSettings.utilOverride} />
+              <span>
+                <span style="font-size: 13px;">유틸리티 봇 템플릿 덮어쓰기</span>
+                <span style="display: block; font-size: 11px; color: var(--fg3);">유틸리티 봇이어도 이 프리셋의 promptTemplate을 사용합니다</span>
+              </span>
             </label>
-            <label style="display: flex; align-items: center; gap: 8px;">
-              <input type="checkbox" bind:checked={preset.promptSettings.customChainOfThought} />
-              Custom Chain of Thought
+            <label style="display: flex; align-items: flex-start; gap: 8px;">
+              <input type="checkbox" style="margin-top: 3px;" bind:checked={preset.promptSettings.customChainOfThought} />
+              <span>
+                <span style="font-size: 13px;">사고 과정 (CoT) 커스텀 처리</span>
+                <span style="display: block; font-size: 11px; color: var(--fg3);">thinking 태그를 직접 관리합니다</span>
+              </span>
             </label>
           </div>
+          {#if preset.promptSettings.customChainOfThought}
           <div class="field" style="margin-top: 8px;">
-            <label class="label">Max Thought Tag Depth</label>
-            <input class="input" type="number" bind:value={preset.promptSettings.maxThoughtTagDepth} />
+            <label class="label">사고 태그 최대 깊이</label>
+            <input class="input" type="number" min="1" bind:value={preset.promptSettings.maxThoughtTagDepth} placeholder="기본값: 1" />
           </div>
+          {/if}
         </div>
       </div>
       {/if}

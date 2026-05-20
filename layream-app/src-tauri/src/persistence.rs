@@ -300,3 +300,215 @@ fn is_safe_id(id: &str) -> bool {
             .chars()
             .all(|c| c.is_ascii_hexdigit() || c == '-')
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Workspaces: each workspace is a directory under `$APP_DATA/workspaces/`
+// containing session.json and hypa.json, plus a metadata file
+// `$APP_DATA/workspaces/{id}.json` with the workspace header (name,
+// character_id, preset_id, module_ids, provider, timestamps).
+// ──────────────────────────────────────────────────────────────────────────
+
+pub const WORKSPACE_DIR: &str = "workspaces";
+
+fn workspace_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join(WORKSPACE_DIR)
+}
+
+/// Creates a new workspace with the given name. Returns the generated id.
+/// The metadata file and subdirectory are created atomically (metadata via
+/// tmp+rename, subdirectory via create_dir_all).
+pub fn workspace_create(data_dir: &Path, name: &str) -> Result<String, String> {
+    let dir = workspace_dir(data_dir);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    let id = generate_id();
+    let ts = now_secs();
+    let meta = serde_json::json!({
+        "id": id,
+        "name": name,
+        "character_id": null,
+        "preset_id": null,
+        "module_ids": [],
+        "provider": null,
+        "created_at": ts,
+        "updated_at": ts,
+    });
+
+    let json = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
+    let final_path = dir.join(format!("{}.json", id));
+    let tmp_path = dir.join(format!("{}.json.tmp", id));
+    fs::write(&tmp_path, json.as_bytes()).map_err(|e| e.to_string())?;
+    fs::rename(&tmp_path, &final_path).map_err(|e| e.to_string())?;
+
+    // Create the workspace subdirectory for session/hypa data
+    fs::create_dir_all(dir.join(&id)).map_err(|e| e.to_string())?;
+
+    Ok(id)
+}
+
+/// Lists all workspaces as metadata headers, sorted by updated_at descending.
+/// Skips files that fail to parse (same resilience as library_list).
+pub fn workspace_list(data_dir: &Path) -> Result<Vec<Value>, String> {
+    let dir = workspace_dir(data_dir);
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut items: Vec<Value> = Vec::new();
+    for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        // Only read .json files (skip directories and .tmp files)
+        if !path.is_file() || path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let json = match fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let meta: Value = match serde_json::from_str(&json) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        // Only include items that have an id field (workspace metadata)
+        if meta.get("id").is_some() {
+            items.push(meta);
+        }
+    }
+    items.sort_by(|a, b| {
+        let ta = a.get("updated_at").and_then(|v| v.as_u64()).unwrap_or(0);
+        let tb = b.get("updated_at").and_then(|v| v.as_u64()).unwrap_or(0);
+        tb.cmp(&ta)
+    });
+    Ok(items)
+}
+
+/// Loads workspace metadata by id.
+pub fn workspace_load(data_dir: &Path, id: &str) -> Result<Value, String> {
+    if !is_safe_id(id) {
+        return Err(format!("invalid workspace id: {}", id));
+    }
+    let path = workspace_dir(data_dir).join(format!("{}.json", id));
+    if !path.exists() {
+        return Err(format!("workspace not found: {}", id));
+    }
+    let json = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&json).map_err(|e| e.to_string())
+}
+
+/// Updates workspace metadata. Merges the provided data into the existing
+/// metadata, updates the `updated_at` timestamp, and writes atomically.
+pub fn workspace_update(data_dir: &Path, id: &str, data: &Value) -> Result<(), String> {
+    if !is_safe_id(id) {
+        return Err(format!("invalid workspace id: {}", id));
+    }
+    let dir = workspace_dir(data_dir);
+    let final_path = dir.join(format!("{}.json", id));
+    if !final_path.exists() {
+        return Err(format!("workspace not found: {}", id));
+    }
+
+    // Load existing metadata and merge
+    let existing_json = fs::read_to_string(&final_path).map_err(|e| e.to_string())?;
+    let mut meta: serde_json::Map<String, Value> =
+        serde_json::from_str(&existing_json).map_err(|e| e.to_string())?;
+
+    if let Some(obj) = data.as_object() {
+        for (k, v) in obj {
+            // Protect immutable fields
+            if k == "id" || k == "created_at" {
+                continue;
+            }
+            meta.insert(k.clone(), v.clone());
+        }
+    }
+    meta.insert("updated_at".to_string(), Value::from(now_secs()));
+
+    let json = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
+    let tmp_path = dir.join(format!("{}.json.tmp", id));
+    fs::write(&tmp_path, json.as_bytes()).map_err(|e| e.to_string())?;
+    fs::rename(&tmp_path, &final_path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Deletes a workspace: removes both the metadata file and the subdirectory.
+pub fn workspace_delete(data_dir: &Path, id: &str) -> Result<(), String> {
+    if !is_safe_id(id) {
+        return Err(format!("invalid workspace id: {}", id));
+    }
+    let dir = workspace_dir(data_dir);
+
+    // Remove metadata file
+    let meta_path = dir.join(format!("{}.json", id));
+    if meta_path.exists() {
+        fs::remove_file(&meta_path).map_err(|e| e.to_string())?;
+    }
+
+    // Remove subdirectory (session.json, hypa.json, etc.)
+    let sub_dir = dir.join(id);
+    if sub_dir.exists() {
+        fs::remove_dir_all(&sub_dir).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+/// Saves session data for a workspace. Uses atomic tmp+rename.
+pub fn workspace_save_session(data_dir: &Path, id: &str, session: &Value) -> Result<(), String> {
+    if !is_safe_id(id) {
+        return Err(format!("invalid workspace id: {}", id));
+    }
+    let sub_dir = workspace_dir(data_dir).join(id);
+    fs::create_dir_all(&sub_dir).map_err(|e| e.to_string())?;
+
+    let json = serde_json::to_string_pretty(session).map_err(|e| e.to_string())?;
+    let tmp_path = sub_dir.join("session.json.tmp");
+    let final_path = sub_dir.join("session.json");
+    fs::write(&tmp_path, json.as_bytes()).map_err(|e| e.to_string())?;
+    fs::rename(&tmp_path, &final_path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Loads session data for a workspace. Returns `{ "messages": [] }` if none.
+pub fn workspace_load_session(data_dir: &Path, id: &str) -> Result<Value, String> {
+    if !is_safe_id(id) {
+        return Err(format!("invalid workspace id: {}", id));
+    }
+    let path = workspace_dir(data_dir).join(id).join("session.json");
+    if !path.exists() {
+        return Ok(serde_json::json!({ "messages": [] }));
+    }
+    let json = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&json).map_err(|e| e.to_string())
+}
+
+/// Saves HyPA data for a workspace. Uses atomic tmp+rename.
+pub fn workspace_save_hypa(data_dir: &Path, id: &str, data: &Value) -> Result<(), String> {
+    if !is_safe_id(id) {
+        return Err(format!("invalid workspace id: {}", id));
+    }
+    let sub_dir = workspace_dir(data_dir).join(id);
+    fs::create_dir_all(&sub_dir).map_err(|e| e.to_string())?;
+
+    let json = serde_json::to_string_pretty(data).map_err(|e| e.to_string())?;
+    let tmp_path = sub_dir.join("hypa.json.tmp");
+    let final_path = sub_dir.join("hypa.json");
+    fs::write(&tmp_path, json.as_bytes()).map_err(|e| e.to_string())?;
+    fs::rename(&tmp_path, &final_path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Loads HyPA data for a workspace. Returns `{ "summaries": [] }` if none.
+pub fn workspace_load_hypa(data_dir: &Path, id: &str) -> Result<Value, String> {
+    if !is_safe_id(id) {
+        return Err(format!("invalid workspace id: {}", id));
+    }
+    let path = workspace_dir(data_dir).join(id).join("hypa.json");
+    if !path.exists() {
+        return Ok(serde_json::json!({ "summaries": [] }));
+    }
+    let json = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&json).map_err(|e| e.to_string())
+}

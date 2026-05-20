@@ -2220,6 +2220,7 @@ dependencies = [
  "futures",
  "hex",
  "hex-literal",
+ "log",
  "rand 0.9.4",
  "regex",
  "reqwest 0.12.28",

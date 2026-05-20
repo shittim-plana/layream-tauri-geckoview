@@ -6,8 +6,8 @@ use layream_core::mistral;
 use layream_core::preset;
 use layream_core::types::BotPreset;
 use layream_core::vertex_api::{
-    self, Content, GenerateRequest, GenerationConfig, Part, SafetySetting, ThinkingConfig,
-    VertexTool,
+    self, Content, GenerateRequest, GenerationConfig, Part, ThinkingConfig,
+    VertexTool, default_safety_settings,
 };
 use layream_core::vertex_auth::{
     self, OAuthCredentials, PkceChallenge, Tokens, VERTEX_CLIENT_ID, LAYREAM_REDIRECT_URI,
@@ -101,6 +101,67 @@ impl Default for StreamCancelState {
     fn default() -> Self {
         Self { token: Mutex::new(None) }
     }
+}
+
+fn vertex_creds() -> OAuthCredentials {
+    OAuthCredentials {
+        client_id: VERTEX_CLIENT_ID.to_string(),
+        client_secret: None,
+        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
+    }
+}
+
+fn gca_creds() -> OAuthCredentials {
+    OAuthCredentials {
+        client_id: GCA_OAUTH_CLIENT_ID.to_string(),
+        client_secret: Some(GCA_OAUTH_CLIENT_SECRET.to_string()),
+        redirect_uri: GCA_REDIRECT_URI.to_string(),
+    }
+}
+
+fn is_safe_filename(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 255
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains("..")
+        && name != "."
+}
+
+async fn ensure_vertex_token(
+    state: &AuthState,
+    app: &tauri::AppHandle,
+) -> Result<(reqwest::Client, String), String> {
+    let tokens = {
+        let guard = state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
+        guard.clone().ok_or("Vertex AI not connected")?
+    };
+    let client = reqwest::Client::new();
+    let valid_tokens = vertex_auth::get_valid_token(&client, &vertex_creds(), &tokens)
+        .await.map_err(|e| e.to_string())?;
+    if valid_tokens.access_token != tokens.access_token {
+        *state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
+        state.persist_tokens(app);
+    }
+    Ok((client, valid_tokens.access_token))
+}
+
+async fn ensure_gca_token(
+    state: &AuthState,
+    app: &tauri::AppHandle,
+) -> Result<(reqwest::Client, String), String> {
+    let tokens = {
+        let guard = state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
+        guard.clone().ok_or("GCA not connected")?
+    };
+    let client = reqwest::Client::new();
+    let valid_tokens = vertex_auth::get_valid_token(&client, &gca_creds(), &tokens)
+        .await.map_err(|e| e.to_string())?;
+    if valid_tokens.access_token != tokens.access_token {
+        *state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
+        state.persist_tokens(app);
+    }
+    Ok((client, valid_tokens.access_token))
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -218,6 +279,7 @@ pub async fn parse_risum(data: Vec<u8>) -> Result<Value, String> {
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn load_preset_from_path(name: String, temp_name: String, app: tauri::AppHandle) -> Result<Value, String> {
+    if !is_safe_filename(&temp_name) { return Err(format!("Invalid temp filename: {}", temp_name)); }
     let data_dir = persistence::get_data_dir(&app)?;
     let path = data_dir.join(&temp_name);
     let data = std::fs::read(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
@@ -234,6 +296,7 @@ pub async fn load_character_from_path(
     name: String, temp_name: String,
     asset_state: State<'_, CharacterAssetsState>, app: tauri::AppHandle,
 ) -> Result<Value, String> {
+    if !is_safe_filename(&temp_name) { return Err(format!("Invalid temp filename: {}", temp_name)); }
     let data_dir = persistence::get_data_dir(&app)?;
     let path = data_dir.join(&temp_name);
 
@@ -295,6 +358,7 @@ pub async fn load_character_from_path(
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn parse_risum_from_path(temp_name: String, app: tauri::AppHandle) -> Result<Value, String> {
+    if !is_safe_filename(&temp_name) { return Err(format!("Invalid temp filename: {}", temp_name)); }
     let data_dir = persistence::get_data_dir(&app)?;
     let path = data_dir.join(&temp_name);
     let data = std::fs::read(&path).map_err(|e| format!("read {}: {}", path.display(), e))?;
@@ -330,31 +394,24 @@ fn build_system_instruction(prompt: &Option<String>) -> Option<Content> {
         })
 }
 
-fn build_safety_settings() -> Vec<SafetySetting> {
-    ["HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH",
-     "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT",
-     "HARM_CATEGORY_CIVIC_INTEGRITY"]
-        .iter()
-        .map(|cat| SafetySetting {
-            category: cat.to_string(),
-            threshold: "BLOCK_NONE".to_string(),
-        })
-        .collect()
-}
 
 fn messages_to_contents(messages: &[Value]) -> Vec<Content> {
     messages.iter().enumerate().filter_map(|(i, m)| {
         let role = m.get("role").and_then(|v| v.as_str());
         let text = m.get("text").and_then(|v| v.as_str());
-        if role.is_none() || text.is_none() {
-            log::warn!("messages_to_contents: skipping message[{i}] — missing role or text");
-            return None;
+        match (role, text) {
+            (Some(role), Some(text)) => {
+                let api_role = match role { "char" => "model", r => r };
+                Some(Content {
+                    role: api_role.to_string(),
+                    parts: vec![Part { text: Some(text.to_string()), thought: None, inline_data: None }],
+                })
+            }
+            _ => {
+                log::warn!("messages_to_contents: skipping message[{i}] — missing role or text");
+                None
+            }
         }
-        let api_role = match role.expect("guarded by is_none check") { "char" => "model", r => r };
-        Some(Content {
-            role: api_role.to_string(),
-            parts: vec![Part { text: Some(text.expect("guarded by is_none check").to_string()), thought: None, inline_data: None }],
-        })
     }).collect()
 }
 
@@ -362,17 +419,21 @@ fn messages_to_chat_messages(messages: &[Value]) -> Vec<mistral::ChatMessage> {
     messages.iter().enumerate().filter_map(|(i, m)| {
         let role = m.get("role").and_then(|v| v.as_str());
         let text = m.get("text").and_then(|v| v.as_str());
-        if role.is_none() || text.is_none() {
-            log::warn!("messages_to_chat_messages: skipping message[{i}] — missing role or text");
-            return None;
+        match (role, text) {
+            (Some(role), Some(text)) => {
+                let mistral_role = match role { "model" | "char" => "assistant", r => r };
+                Some(mistral::ChatMessage {
+                    role: mistral_role.to_string(),
+                    content: text.to_string(),
+                    tool_calls: None,
+                    tool_call_id: None,
+                })
+            }
+            _ => {
+                log::warn!("messages_to_chat_messages: skipping message[{i}] — missing role or text");
+                None
+            }
         }
-        let mistral_role = match role.expect("guarded by is_none check") { "model" | "char" => "assistant", r => r };
-        Some(mistral::ChatMessage {
-            role: mistral_role.to_string(),
-            content: text.expect("guarded by is_none check").to_string(),
-            tool_calls: None,
-            tool_call_id: None,
-        })
     }).collect()
 }
 
@@ -422,22 +483,7 @@ pub async fn chat_vertex(
     let cancel = retry::new_cancel_token();
     *cancel_state.token.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(cancel.clone());
 
-    let tokens = {
-        let guard = state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
-        guard.clone().ok_or("Vertex AI not connected")?
-    };
-    let client = reqwest::Client::new();
-    let creds = OAuthCredentials {
-        client_id: VERTEX_CLIENT_ID.to_string(),
-        client_secret: None,
-        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
-    };
-    let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
-        .await.map_err(|e| e.to_string())?;
-    if valid_tokens.access_token != tokens.access_token {
-        *state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
-        state.persist_tokens(&app);
-    }
+    let (client, access_token) = ensure_vertex_token(&state, &app).await?;
 
     let thinking_config = thinking_budget.map(|b| ThinkingConfig::Budget { thinking_budget: b });
 
@@ -452,7 +498,7 @@ pub async fn chat_vertex(
     let request = GenerateRequest {
         contents: messages_to_contents(&messages),
         system_instruction: build_system_instruction(&system_prompt),
-        safety_settings: build_safety_settings(),
+        safety_settings: default_safety_settings(),
         generation_config: GenerationConfig {
             max_output_tokens: max_tokens,
             temperature,
@@ -474,7 +520,7 @@ pub async fn chat_vertex(
 
     let start = std::time::Instant::now();
     let result = vertex_api::stream_generate(
-        &client, &valid_tokens.access_token, &project_id, &region, &model, &request, on_chunk,
+        &client, &access_token, &project_id, &region, &model, &request, on_chunk,
         Some(cancel),
     ).await;
     let elapsed = start.elapsed().as_millis();
@@ -511,22 +557,7 @@ pub async fn chat_gca(
     let cancel = retry::new_cancel_token();
     *cancel_state.token.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(cancel.clone());
 
-    let tokens = {
-        let guard = state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
-        guard.clone().ok_or("GCA not connected")?
-    };
-    let client = reqwest::Client::new();
-    let creds = OAuthCredentials {
-        client_id: GCA_OAUTH_CLIENT_ID.to_string(),
-        client_secret: Some(GCA_OAUTH_CLIENT_SECRET.to_string()),
-        redirect_uri: GCA_REDIRECT_URI.to_string(),
-    };
-    let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
-        .await.map_err(|e| e.to_string())?;
-    if valid_tokens.access_token != tokens.access_token {
-        *state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
-        state.persist_tokens(&app);
-    }
+    let (client, access_token) = ensure_gca_token(&state, &app).await?;
 
     let thinking_config = thinking_level
         .filter(|l| l != "none")
@@ -549,7 +580,7 @@ pub async fn chat_gca(
     let request = GenerateRequest {
         contents: messages_to_contents(&messages),
         system_instruction: build_system_instruction(&system_prompt),
-        safety_settings: build_safety_settings(),
+        safety_settings: default_safety_settings(),
         generation_config: GenerationConfig {
             max_output_tokens: max_tokens,
             temperature,
@@ -571,7 +602,7 @@ pub async fn chat_gca(
 
     let start = std::time::Instant::now();
     let result = gca::stream_generate(
-        &client, &valid_tokens.access_token, &model, &request, on_chunk,
+        &client, &access_token, &model, &request, on_chunk,
         Some(cancel),
     ).await;
     let elapsed = start.elapsed().as_millis();
@@ -655,11 +686,7 @@ pub async fn vertex_oauth_start(
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     let pkce = vertex_auth::generate_pkce();
-    let creds = OAuthCredentials {
-        client_id: VERTEX_CLIENT_ID.to_string(),
-        client_secret: None,
-        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
-    };
+    let creds = vertex_creds();
     let auth_url = vertex_auth::build_auth_url(&creds, Some(&pkce));
     *state.vertex_pkce.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(pkce.clone());
     if let Ok(data_dir) = persistence::get_data_dir(&app) {
@@ -688,11 +715,7 @@ pub async fn vertex_oauth_callback(
             log::warn!("Failed to clean PKCE verifier: {e}");
         }
     }
-    let creds = OAuthCredentials {
-        client_id: VERTEX_CLIENT_ID.to_string(),
-        client_secret: None,
-        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
-    };
+    let creds = vertex_creds();
     let client = reqwest::Client::new();
     let tokens = vertex_auth::exchange_code(&client, &creds, &code, Some(&verifier))
         .await
@@ -790,11 +813,7 @@ pub async fn gca_oauth_callback(
     state: State<'_, AuthState>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    let creds = OAuthCredentials {
-        client_id: GCA_OAUTH_CLIENT_ID.to_string(),
-        client_secret: Some(GCA_OAUTH_CLIENT_SECRET.to_string()),
-        redirect_uri: GCA_REDIRECT_URI.to_string(),
-    };
+    let creds = gca_creds();
     let client = reqwest::Client::new();
     let tokens = vertex_auth::exchange_code(&client, &creds, &code, None)
         .await
@@ -845,23 +864,8 @@ pub async fn vertex_list_projects(
     state: State<'_, AuthState>,
     app: tauri::AppHandle,
 ) -> Result<Value, String> {
-    let tokens = {
-        let guard = state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
-        guard.clone().ok_or("Not connected")?
-    };
-    let client = reqwest::Client::new();
-    let creds = OAuthCredentials {
-        client_id: VERTEX_CLIENT_ID.to_string(),
-        client_secret: None,
-        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
-    };
-    let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
-        .await.map_err(|e| e.to_string())?;
-    if valid_tokens.access_token != tokens.access_token {
-        *state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
-        state.persist_tokens(&app);
-    }
-    let projects = layream_core::vertex_auth::list_gcp_projects(&client, &valid_tokens.access_token)
+    let (client, access_token) = ensure_vertex_token(&state, &app).await?;
+    let projects = layream_core::vertex_auth::list_gcp_projects(&client, &access_token)
         .await
         .map_err(|e| e.to_string())?;
     serde_json::to_value(&projects).map_err(|e| e.to_string())
@@ -896,23 +900,8 @@ pub async fn vertex_list_models(
     state: State<'_, AuthState>,
     app: tauri::AppHandle,
 ) -> Result<Value, String> {
-    let tokens = {
-        let guard = state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
-        guard.clone().ok_or("Vertex AI not connected")?
-    };
-    let client = reqwest::Client::new();
-    let creds = OAuthCredentials {
-        client_id: VERTEX_CLIENT_ID.to_string(),
-        client_secret: None,
-        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
-    };
-    let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
-        .await.map_err(|e| e.to_string())?;
-    if valid_tokens.access_token != tokens.access_token {
-        *state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
-        state.persist_tokens(&app);
-    }
-    let models = layream_core::vertex_api::list_models(&client, &valid_tokens.access_token, &region)
+    let (client, access_token) = ensure_vertex_token(&state, &app).await?;
+    let models = layream_core::vertex_api::list_models(&client, &access_token, &region)
         .await
         .map_err(|e| e.to_string())?;
     serde_json::to_value(&models).map_err(|e| e.to_string())
@@ -984,26 +973,11 @@ pub async fn embed_vertex(
     state: State<'_, AuthState>,
     app: tauri::AppHandle,
 ) -> Result<Vec<Vec<f64>>, String> {
-    let tokens = {
-        let guard = state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
-        guard.clone().ok_or("Vertex AI not connected")?
-    };
-    let client = reqwest::Client::new();
-    let creds = OAuthCredentials {
-        client_id: VERTEX_CLIENT_ID.to_string(),
-        client_secret: None,
-        redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
-    };
-    let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
-        .await.map_err(|e| e.to_string())?;
-    if valid_tokens.access_token != tokens.access_token {
-        *state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
-        state.persist_tokens(&app);
-    }
+    let (client, access_token) = ensure_vertex_token(&state, &app).await?;
 
     let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
     vertex_api::batch_embed_contents(
-        &client, &valid_tokens.access_token, &project_id, &region, &model, &text_refs,
+        &client, &access_token, &project_id, &region, &model, &text_refs,
     ).await.map_err(|e| e.to_string())
 }
 
@@ -1023,23 +997,8 @@ pub async fn gca_load_code_assist(
     state: State<'_, AuthState>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    let tokens = {
-        let guard = state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
-        guard.clone().ok_or("GCA not connected")?
-    };
-    let client = reqwest::Client::new();
-    let creds = OAuthCredentials {
-        client_id: GCA_OAUTH_CLIENT_ID.to_string(),
-        client_secret: Some(GCA_OAUTH_CLIENT_SECRET.to_string()),
-        redirect_uri: GCA_REDIRECT_URI.to_string(),
-    };
-    let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
-        .await.map_err(|e| e.to_string())?;
-    if valid_tokens.access_token != tokens.access_token {
-        *state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
-        state.persist_tokens(&app);
-    }
-    gca::load_code_assist(&client, &valid_tokens.access_token)
+    let (client, access_token) = ensure_gca_token(&state, &app).await?;
+    gca::load_code_assist(&client, &access_token)
         .await.map_err(|e| e.to_string())
 }
 
@@ -1048,23 +1007,8 @@ pub async fn gca_check_opt_out(
     state: State<'_, AuthState>,
     app: tauri::AppHandle,
 ) -> Result<bool, String> {
-    let tokens = {
-        let guard = state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
-        guard.clone().ok_or("GCA not connected")?
-    };
-    let client = reqwest::Client::new();
-    let creds = OAuthCredentials {
-        client_id: GCA_OAUTH_CLIENT_ID.to_string(),
-        client_secret: Some(GCA_OAUTH_CLIENT_SECRET.to_string()),
-        redirect_uri: GCA_REDIRECT_URI.to_string(),
-    };
-    let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
-        .await.map_err(|e| e.to_string())?;
-    if valid_tokens.access_token != tokens.access_token {
-        *state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
-        state.persist_tokens(&app);
-    }
-    gca::check_and_opt_out(&client, &valid_tokens.access_token)
+    let (client, access_token) = ensure_gca_token(&state, &app).await?;
+    gca::check_and_opt_out(&client, &access_token)
         .await.map_err(|e| e.to_string())
 }
 
@@ -1287,23 +1231,7 @@ pub async fn generate_user_message(
             let project_id = project_id.ok_or("project_id required for vertex")?;
             let region = region.as_deref().unwrap_or("us-central1");
 
-            let tokens = {
-                let guard = state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
-                guard.clone().ok_or("Vertex AI not connected")?
-            };
-            let client = reqwest::Client::new();
-            let creds = OAuthCredentials {
-                client_id: VERTEX_CLIENT_ID.to_string(),
-                client_secret: None,
-                redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
-            };
-            let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
-                .await
-                .map_err(|e| e.to_string())?;
-            if valid_tokens.access_token != tokens.access_token {
-                *state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
-                state.persist_tokens(&app);
-            }
+            let (client, access_token) = ensure_vertex_token(&state, &app).await?;
 
             let request = GenerateRequest {
                 contents: messages_to_contents(&context),
@@ -1315,7 +1243,7 @@ pub async fn generate_user_message(
                         inline_data: None,
                     }],
                 }),
-                safety_settings: build_safety_settings(),
+                safety_settings: default_safety_settings(),
                 generation_config: GenerationConfig {
                     max_output_tokens: USER_MSG_MAX_TOKENS,
                     temperature: USER_MSG_TEMPERATURE,
@@ -1332,7 +1260,7 @@ pub async fn generate_user_message(
 
             vertex_api::generate_non_streaming(
                 &client,
-                &valid_tokens.access_token,
+                &access_token,
                 &project_id,
                 region,
                 &model,
@@ -1342,23 +1270,7 @@ pub async fn generate_user_message(
             .map_err(|e| e.to_string())
         }
         "gca" => {
-            let tokens = {
-                let guard = state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
-                guard.clone().ok_or("GCA not connected")?
-            };
-            let client = reqwest::Client::new();
-            let creds = OAuthCredentials {
-                client_id: GCA_OAUTH_CLIENT_ID.to_string(),
-                client_secret: Some(GCA_OAUTH_CLIENT_SECRET.to_string()),
-                redirect_uri: GCA_REDIRECT_URI.to_string(),
-            };
-            let valid_tokens = vertex_auth::get_valid_token(&client, &creds, &tokens)
-                .await
-                .map_err(|e| e.to_string())?;
-            if valid_tokens.access_token != tokens.access_token {
-                *state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))? = Some(valid_tokens.clone());
-                state.persist_tokens(&app);
-            }
+            let (client, access_token) = ensure_gca_token(&state, &app).await?;
 
             let request = GenerateRequest {
                 contents: messages_to_contents(&context),
@@ -1370,7 +1282,7 @@ pub async fn generate_user_message(
                         inline_data: None,
                     }],
                 }),
-                safety_settings: build_safety_settings(),
+                safety_settings: default_safety_settings(),
                 generation_config: GenerationConfig {
                     max_output_tokens: USER_MSG_MAX_TOKENS,
                     temperature: USER_MSG_TEMPERATURE,
@@ -1387,7 +1299,7 @@ pub async fn generate_user_message(
 
             gca::generate_non_streaming(
                 &client,
-                &valid_tokens.access_token,
+                &access_token,
                 &model,
                 &request,
             )
@@ -1604,4 +1516,64 @@ pub fn library_load_module(id: String, app: tauri::AppHandle) -> Result<Value, S
 pub fn library_delete_module(id: String, app: tauri::AppHandle) -> Result<(), String> {
     let data_dir = persistence::get_data_dir(&app)?;
     persistence::library_delete(&data_dir, persistence::LIB_KIND_MODULE, &id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn cmd_load_modules(ids: Vec<String>, app: tauri::AppHandle) -> Result<Vec<Value>, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    let mut results = Vec::new();
+    for id in &ids {
+        match persistence::library_load(&data_dir, persistence::LIB_KIND_MODULE, id) {
+            Ok(v) => results.push(v),
+            Err(e) => log::warn!("Failed to load module {}: {}", id, e),
+        }
+    }
+    Ok(results)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Workspace commands. CRUD for workspaces + per-workspace session/hypa.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn cmd_workspace_create(name: String, app: tauri::AppHandle) -> Result<String, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::workspace_create(&data_dir, &name)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn cmd_workspace_list(app: tauri::AppHandle) -> Result<Value, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    let items = persistence::workspace_list(&data_dir)?;
+    Ok(Value::Array(items))
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn cmd_workspace_load(id: String, app: tauri::AppHandle) -> Result<Value, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::workspace_load(&data_dir, &id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn cmd_workspace_update(id: String, data: Value, app: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::workspace_update(&data_dir, &id, &data)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn cmd_workspace_delete(id: String, app: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::workspace_delete(&data_dir, &id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn cmd_workspace_save_session_ws(id: String, session: Value, app: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::workspace_save_session(&data_dir, &id, &session)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn cmd_workspace_load_session_ws(id: String, app: tauri::AppHandle) -> Result<Value, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::workspace_load_session(&data_dir, &id)
 }

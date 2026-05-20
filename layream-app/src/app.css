@@ -30,13 +30,13 @@
   --type-cache: #6366f1;
 
   /* CBS syntax highlighting colors */
-  --cbs-block: #e06c75;
-  --cbs-var: #61afef;
+  --cbs-block: #c792ea;
+  --cbs-var: #c3e88d;
   --cbs-math: #e5c07b;
-  --cbs-identity: #c678dd;
-  --cbs-fn: #56b6c2;
+  --cbs-identity: #ffcb6b;
+  --cbs-fn: #82aaff;
   --cbs-comment: #5c6370;
-  --cbs-else: #fb923c;
+  --cbs-else: #f78c6c;
 
   /* compat aliases — used by existing views, remove after rewrite */
   --text: var(--fg);
@@ -385,7 +385,7 @@ button {
   pointer-events: none;
   background: var(--bg3);
   padding: 10px 12px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'Fira Code', 'JetBrains Mono', monospace;
   font-size: 13px;
   line-height: 1.6;
   white-space: pre-wrap;
@@ -402,7 +402,7 @@ button {
   caret-color: var(--fg);
   border: none;
   padding: 10px 12px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'Fira Code', 'JetBrains Mono', monospace;
   font-size: 13px;
   line-height: 1.6;
   resize: vertical;

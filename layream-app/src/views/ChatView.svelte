@@ -20,6 +20,8 @@
   let unlisten;
   let unlistenAppFlush;
   let sessionSaveTimeout;
+  let editingMsgId = $state(null);
+  let editingText = $state("");
   let error = $state("");
   const ERROR_CLEAR_MS = 3000;
   function flashError(msg) {
@@ -164,7 +166,7 @@
           greetingIndex = 0;
           messages = [...messages, { chatId: newChatId(), role: "char", text: allGreetings[0], time: new Date().toLocaleTimeString() }];
         }
-      } catch (_) {}
+      } catch (e) { console.error("first_mes load failed:", e); }
     }
 
     messages = [...messages, { chatId: newChatId(), role: "user", text: userMsg, time: new Date().toLocaleTimeString() }];
@@ -203,11 +205,11 @@
             if (ext.additionalData?.lorebook) {
               lorebook = ext.additionalData.lorebook.filter(e => !e.disable);
             } else if (card.character_book?.entries) {
-              lorebook = Object.values(card.character_book.entries).filter(e => !e.enabled === false);
+              lorebook = Object.values(card.character_book.entries).filter(e => e.enabled !== false);
             }
           } catch (_) {}
 
-          const regexList = preset.regex || [];
+          const regexList = [...(preset.regex || [])];
           const toggles = {};
           if (preset.customPromptTemplateToggle) {
             for (const line of preset.customPromptTemplateToggle.split("\n")) {
@@ -226,6 +228,37 @@
               lorebook = [...lorebook, ...active];
             }
           } catch (_) {}
+
+          // Merge enabled modules (multi-module support)
+          try {
+            const enabledModuleIds = settings.enabledModules || [];
+            if (enabledModuleIds.length > 0) {
+              const loadedModules = await invoke("cmd_load_modules", { ids: enabledModuleIds });
+              for (const mod of loadedModules) {
+                const modObj = mod?.data || mod || {};
+                // Merge lorebook entries
+                const modLorebook = modObj.lorebook || [];
+                const activeEntries = (Array.isArray(modLorebook) ? modLorebook : []).filter(e => !e.disable);
+                lorebook = [...lorebook, ...activeEntries];
+                // Merge regex entries
+                const modRegex = modObj.regex || [];
+                if (Array.isArray(modRegex) && modRegex.length > 0) {
+                  regexList.push(...modRegex);
+                }
+                // Merge custom module toggles
+                const modToggles = modObj.customModuleToggle;
+                if (typeof modToggles === "string" && modToggles.trim()) {
+                  for (const line of modToggles.split("\n")) {
+                    const m = line.match(/^(\w+)\s*[:=]\s*(.+)$/);
+                    if (m) toggles[`toggle_${m[1]}`] = m[2].trim();
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.error("Multi-module merge failed:", e);
+            flashError("Failed to load enabled modules — continuing without them");
+          }
 
           const preChatParts = [];
           const postChatParts = [];
@@ -499,11 +532,14 @@
 
   function swipeResponse(msg, direction) {
     if (!msg.alternatives?.length) return;
-    const all = [...msg.alternatives, msg.text];
-    const currentIdx = all.indexOf(msg.text);
-    let newIdx = (currentIdx + direction + all.length) % all.length;
-    msg.text = all[newIdx];
-    msg.alternatives = all.filter(t => t !== msg.text);
+    if (!Array.isArray(msg._allResponses)) {
+      msg._allResponses = [...msg.alternatives, msg.text];
+      msg._responseIdx = msg._allResponses.length - 1;
+    }
+    const total = msg._allResponses.length;
+    msg._responseIdx = (msg._responseIdx + direction + total) % total;
+    msg.text = msg._allResponses[msg._responseIdx];
+    msg.alternatives = msg._allResponses.filter((_, i) => i !== msg._responseIdx);
     messages = [...messages];
   }
 
@@ -519,6 +555,25 @@
     try {
       await invoke("cancel_chat");
     } catch (_) {}
+  }
+
+  function startEdit(msg) {
+    editingMsgId = msg.chatId;
+    editingText = msg.text;
+  }
+
+  function saveEdit(msg) {
+    if (editingText.trim() === "") return;
+    messages = messages.map(m =>
+      m.chatId === msg.chatId ? { ...m, text: editingText } : m
+    );
+    editingMsgId = null;
+    editingText = "";
+  }
+
+  function cancelEdit() {
+    editingMsgId = null;
+    editingText = "";
   }
 </script>
 
@@ -546,8 +601,25 @@
 
     {#each messages as msg, i}
       <div class="message {msg.role}">
-        <button class="msg-delete" onclick={() => deleteMessage(msg.chatId)} disabled={streaming} title="삭제" aria-label="메시지 삭제">×</button>
-        <div class="message-bubble">{msg.text}</div>
+        <div class="msg-actions">
+          <button class="msg-action-btn" onclick={() => startEdit(msg)} disabled={streaming || editingMsgId !== null} title="편집" aria-label="메시지 편집">✏</button>
+          <button class="msg-action-btn msg-delete-btn" onclick={() => deleteMessage(msg.chatId)} disabled={streaming} title="삭제" aria-label="메시지 삭제">×</button>
+        </div>
+        {#if msg.chatId === editingMsgId}
+          <div class="edit-area">
+            <textarea
+              class="edit-textarea"
+              bind:value={editingText}
+              rows="3"
+            ></textarea>
+            <div class="edit-buttons">
+              <button class="btn btn-sm btn-primary edit-save-btn" onclick={() => saveEdit(msg)}>저장</button>
+              <button class="btn btn-sm btn-secondary edit-cancel-btn" onclick={cancelEdit}>취소</button>
+            </div>
+          </div>
+        {:else}
+          <div class="message-bubble">{msg.text}</div>
+        {/if}
         <span class="message-time">{msg.time}</span>
         {#if i === 0 && msg.role === "char" && greetings.length >= 2}
           <div class="swipe-nav">
@@ -556,8 +628,8 @@
             <button onclick={() => swipeGreeting(1)} aria-label="다음 인사말">▶</button>
           </div>
         {:else if msg.role === "char" && msg.alternatives?.length}
-          {@const total = msg.alternatives.length + 1}
-          {@const current = msg.alternatives.indexOf(msg.text) === -1 ? total : msg.alternatives.indexOf(msg.text) + 1}
+          {@const total = msg._allResponses?.length ?? ((msg.alternatives?.length || 0) + 1)}
+          {@const current = (msg._responseIdx ?? (total - 1)) + 1}
           <div class="swipe-nav">
             <button onclick={() => swipeResponse(msg, -1)} disabled={streaming} aria-label="이전 응답">◀</button>
             <span>{current}/{total}</span>
@@ -631,10 +703,14 @@
     background: var(--error, #e53935);
   }
   .message { position: relative; }
-  .msg-delete {
+  .msg-actions {
     position: absolute;
     top: 2px;
     right: 2px;
+    display: flex;
+    gap: 2px;
+  }
+  .msg-action-btn {
     background: none;
     border: none;
     color: var(--fg3);
@@ -643,8 +719,45 @@
     padding: 2px 5px;
     opacity: 0.5;
   }
-  .msg-delete:hover { opacity: 1; color: var(--error, #e53935); }
-  .msg-delete:disabled { cursor: not-allowed; opacity: 0.25; }
+  .msg-action-btn:hover { opacity: 1; }
+  .msg-delete-btn:hover { color: var(--error, #e53935); }
+  .msg-action-btn:disabled { cursor: not-allowed; opacity: 0.25; }
+  .edit-area {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+  }
+  .edit-textarea {
+    width: 100%;
+    min-height: 60px;
+    padding: 8px;
+    border: 1px solid var(--bg4);
+    border-radius: var(--radius-sm, 4px);
+    background: var(--bg1, #1e1e1e);
+    color: var(--fg1, #e0e0e0);
+    font-size: 13px;
+    font-family: inherit;
+    resize: vertical;
+    box-sizing: border-box;
+  }
+  .edit-textarea:focus {
+    outline: none;
+    border-color: var(--accent, #5c6bc0);
+  }
+  .edit-buttons {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+  }
+  .edit-save-btn {
+    padding: 4px 12px;
+    font-size: 12px;
+  }
+  .edit-cancel-btn {
+    padding: 4px 12px;
+    font-size: 12px;
+  }
   .swipe-nav {
     display: flex; align-items: center; gap: 8px;
     justify-content: center; margin-top: 4px;

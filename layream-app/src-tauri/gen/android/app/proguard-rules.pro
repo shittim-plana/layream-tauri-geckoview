@@ -23,3 +23,8 @@
 # Tauri / WRY
 -keep class app.tauri.** { *; }
 -keep class com.shittimplana.layream.** { *; }
+
+# GeckoView
+-keep class org.mozilla.geckoview.** { *; }
+-keep class org.mozilla.gecko.** { *; }
+-dontwarn java.beans.**

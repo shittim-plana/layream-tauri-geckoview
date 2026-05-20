@@ -172,7 +172,7 @@ pub async fn check_and_opt_out(
             .await
             .map_err(|e| LayreamError::Http(e.to_string()))?;
         if !opt_resp.status().is_success() {
-            eprintln!("[layream] GCA opt-out failed: status {}", opt_resp.status().as_u16());
+            log::warn!("GCA opt-out failed: status {}", opt_resp.status().as_u16());
         }
         return Ok(true);
     }

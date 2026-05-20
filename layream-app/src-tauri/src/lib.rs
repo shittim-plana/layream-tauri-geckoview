@@ -95,6 +95,14 @@ pub fn run() {
             commands::library_list_modules,
             commands::library_load_module,
             commands::library_delete_module,
+            commands::cmd_load_modules,
+            commands::cmd_workspace_create,
+            commands::cmd_workspace_list,
+            commands::cmd_workspace_load,
+            commands::cmd_workspace_update,
+            commands::cmd_workspace_delete,
+            commands::cmd_workspace_save_session_ws,
+            commands::cmd_workspace_load_session_ws,
             commands_hypa::hypa_summarize,
             commands_hypa::hypa_search,
             commands_hypa::hypa_pin_message,
@@ -107,6 +115,5 @@ pub fn run() {
 
     if let Err(e) = result {
         log::error!("Tauri app error: {}", e);
-        eprintln!("Tauri app error: {}", e);
     }
 }

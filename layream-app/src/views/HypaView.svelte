@@ -157,6 +157,8 @@
       const items = data?.summaries
         ?? (Array.isArray(data) ? data : null)
         ?? data?.hypaV3Data?.summaries
+        ?? data?.memory?.summaries
+        ?? data?.hypaV3Data?.memory?.summaries
         ?? null;
       if (items && Array.isArray(items)) {
         hypaSummaries = items;

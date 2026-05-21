@@ -55,18 +55,17 @@ class OAuthDialog(
             override fun onLoadRequest(
                 session: GeckoSession,
                 request: GeckoSession.NavigationDelegate.LoadRequest
-            ): GeckoResult<GeckoSession.NavigationDelegate.AllowOrDeny>? {
+            ): GeckoResult<Boolean>? {
                 val url = request.uri
                 if (url.startsWith(redirectUriPrefix)) {
                     val uri = Uri.parse(url)
                     val code = uri.getQueryParameter("code")
                     val error = uri.getQueryParameter("error")
                     resolve(code, error ?: if (code == null) "no code in redirect" else null)
-                    // GeckoView NavigationDelegate runs on the UI thread, safe to dismiss directly
                     dismiss()
-                    return GeckoResult.fromValue(GeckoSession.NavigationDelegate.AllowOrDeny.DENY)
+                    return GeckoResult.fromValue(false)
                 }
-                return GeckoResult.fromValue(GeckoSession.NavigationDelegate.AllowOrDeny.ALLOW)
+                return GeckoResult.fromValue(true)
             }
         }
 

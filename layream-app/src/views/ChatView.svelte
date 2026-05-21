@@ -23,10 +23,40 @@
   let editingMsgId = $state(null);
   let editingText = $state("");
   let error = $state("");
+
+  // Preset toggle UI state — keys from customPromptTemplateToggle, values
+  // are booleans. Defaults to all-ON so existing behaviour is preserved
+  // when a session has no saved toggle state.
+  let activeToggles = $state({});   // { dark: true, verbose: false, … }
+  let toggleDefs = $state([]);      // [{ key: "dark", label: "Dark Mode" }, …]
+  let togglePanelOpen = $state(false);
   const ERROR_CLEAR_MS = 3000;
   function flashError(msg) {
     error = msg;
     setTimeout(() => { if (error === msg) error = ""; }, ERROR_CLEAR_MS);
+  }
+
+  /** Parse toggle definitions from preset's customPromptTemplateToggle string.
+   *  Format: one per line, `key=Label` or `key:Label` (matching the regex
+   *  already used in assemblePrompt).  Returns array of {key, label}. */
+  function parseToggleDefs(preset) {
+    if (!preset?.customPromptTemplateToggle) return [];
+    return preset.customPromptTemplateToggle.split("\n")
+      .map(line => {
+        const m = line.match(/^(\w+)\s*[:=]\s*(.+)$/);
+        return m ? { key: m[1], label: m[2].trim() } : null;
+      })
+      .filter(Boolean);
+  }
+
+  /** Initialise activeToggles for the given defs, preserving any existing
+   *  state (e.g. from a restored session) and defaulting new keys to ON. */
+  function initToggles(defs) {
+    const next = {};
+    for (const d of defs) {
+      next[d.key] = activeToggles[d.key] !== undefined ? activeToggles[d.key] : true;
+    }
+    activeToggles = next;
   }
 
   // Stable id for each message — used by HyPA Summary.chatMemos to link
@@ -55,7 +85,7 @@
           clearTimeout(sessionSaveTimeout);
           if (sessionLoaded) {
             try {
-              await invoke("cmd_save_session", { session: { messages } });
+              await invoke("cmd_save_session", { session: { messages, activeToggles } });
             } catch (e) { console.error("ChatView app-flush save failed:", e); }
           }
         });
@@ -69,6 +99,9 @@
       const savedSession = await invoke("cmd_load_session");
       if (savedSession?.messages?.length && messages.length === 0) {
         messages = savedSession.messages;
+      }
+      if (savedSession?.activeToggles && typeof savedSession.activeToggles === "object") {
+        activeToggles = savedSession.activeToggles;
       }
     } catch (e) {
       console.error("Failed to load session:", e);
@@ -90,7 +123,7 @@
     // onDestroy: UI state updates are not visible, so console.error is the
     // maximum viable handling — no flashError.
     if (sessionLoaded && messages.length > 0) {
-      invoke("cmd_save_session", { session: { messages } }).catch(e => console.error("session save on destroy failed:", e));
+      invoke("cmd_save_session", { session: { messages, activeToggles } }).catch(e => console.error("session save on destroy failed:", e));
     }
     clearTimeout(sessionSaveTimeout);
   });
@@ -107,11 +140,13 @@
 
   $effect(() => {
     const msgCount = messages.length;
+    // Read activeToggles so the effect re-runs when toggles change too.
+    const _toggleSnapshot = activeToggles;
     if (sessionLoaded && msgCount > 0) {
       clearTimeout(sessionSaveTimeout);
       sessionSaveTimeout = setTimeout(async () => {
         try {
-          await invoke("cmd_save_session", { session: { messages } });
+          await invoke("cmd_save_session", { session: { messages, activeToggles } });
         } catch (e) {
           console.error("Session save failed:", e);
           flashError(`Session save failed: ${e}`);
@@ -223,11 +258,27 @@
           }
 
           const regexList = [...(preset.regex || [])];
+
+          // Parse toggle definitions and refresh UI state
+          const defs = parseToggleDefs(preset);
+          if (defs.length > 0) {
+            toggleDefs = defs;
+            initToggles(defs);
+          } else {
+            toggleDefs = [];
+          }
+
+          // Build toggles map: only include entries the user has enabled.
           const toggles = {};
           if (preset.customPromptTemplateToggle) {
             for (const line of preset.customPromptTemplateToggle.split("\n")) {
               const m = line.match(/^(\w+)\s*[:=]\s*(.+)$/);
-              if (m) toggles[m[1]] = m[2].trim();
+              if (m) {
+                const key = m[1];
+                if (activeToggles[key] !== false) {
+                  toggles[key] = m[2].trim();
+                }
+              }
             }
           }
           if (preset.templateDefaultVariables) {
@@ -507,7 +558,10 @@
 
   function clearChat() {
     messages = [];
-    invoke("cmd_save_session", { session: { messages: [] } }).catch(e => {
+    // Reset toggles to all-ON for the current preset defs
+    for (const d of toggleDefs) activeToggles[d.key] = true;
+    activeToggles = { ...activeToggles };
+    invoke("cmd_save_session", { session: { messages: [], activeToggles } }).catch(e => {
       console.error("session clear save failed:", e);
       flashError("Failed to clear session on disk");
     });
@@ -673,6 +727,46 @@
     <div bind:this={chatBottom} aria-hidden="true"></div>
   </div>
 
+  {#if toggleDefs.length > 0}
+    <div class="toggle-panel-wrapper">
+      <button
+        class="toggle-panel-trigger"
+        onclick={() => { togglePanelOpen = !togglePanelOpen; }}
+        aria-expanded={togglePanelOpen}
+        aria-label="프롬프트 토글 패널 열기/닫기"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+        토글 ({Object.values(activeToggles).filter(Boolean).length}/{toggleDefs.length})
+        <svg
+          class="toggle-panel-chevron"
+          class:open={togglePanelOpen}
+          width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        >
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+      {#if togglePanelOpen}
+        <div class="toggle-panel">
+          {#each toggleDefs as def (def.key)}
+            <label class="toggle-panel-item">
+              <span class="toggle-panel-label">{def.label}</span>
+              <span class="toggle">
+                <input
+                  type="checkbox"
+                  checked={activeToggles[def.key] !== false}
+                  onchange={(e) => { activeToggles[def.key] = e.target.checked; activeToggles = {...activeToggles}; }}
+                />
+                <span class="toggle-track"></span>
+              </span>
+            </label>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   <div class="chat-input-bar">
     {#if messages.length > 0}
       <button class="btn btn-sm btn-secondary" onclick={clearChat} disabled={streaming} style="flex-shrink: 0; padding: 6px 10px; font-size: 11px; align-self: center;">Clear</button>
@@ -801,5 +895,67 @@
     max-width: 90vw;
     text-align: center;
     box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  }
+
+  /* --- Preset Toggle Panel --- */
+  .toggle-panel-wrapper {
+    position: fixed;
+    bottom: calc(56px + var(--safe-bottom) + 48px);
+    left: 0;
+    right: 0;
+    z-index: 49;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    pointer-events: none;
+  }
+  .toggle-panel-trigger {
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    background: var(--bg3, #2a2a2e);
+    border: none;
+    border-top: 1px solid var(--bg4);
+    color: var(--fg3, #999);
+    font-size: 11px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .toggle-panel-trigger:hover {
+    color: var(--fg1, #e0e0e0);
+  }
+  .toggle-panel-chevron {
+    transition: transform 0.2s;
+    margin-left: auto;
+  }
+  .toggle-panel-chevron.open {
+    transform: rotate(180deg);
+  }
+  .toggle-panel {
+    pointer-events: auto;
+    background: var(--bg2, #1e1e22);
+    border-top: 1px solid var(--bg4);
+    padding: 8px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 160px;
+    overflow-y: auto;
+  }
+  .toggle-panel-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .toggle-panel-label {
+    font-size: 12px;
+    color: var(--fg2, #ccc);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 </style>

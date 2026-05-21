@@ -362,8 +362,10 @@
           {/if}
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
             <div class="field">
-              <label class="label">Temperature ({preset.temperature != null ? (preset.temperature / 100).toFixed(2) : ""})</label>
-              <input class="input" type="number" step="1" bind:value={preset.temperature} />
+              <label class="label">Temperature</label>
+              <input class="input" type="number" step="0.01"
+                value={preset.temperature != null ? (preset.temperature / 100).toFixed(2) : ""}
+                oninput={(e) => preset.temperature = Math.round(Number(e.target.value) * 100)} />
             </div>
             <div class="field">
               <label class="label">Max Context</label>

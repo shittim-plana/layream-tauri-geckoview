@@ -23,8 +23,8 @@
   let oauthMessage = $state("");
 
   async function requestPermissions() {
-    try { await invoke("request_storage_permission"); } catch (_) {}
-    try { await invoke("request_notification_permission"); } catch (_) {}
+    try { await invoke("request_storage_permission"); } catch (e) { console.warn("request_storage_permission:", e); }
+    try { await invoke("request_notification_permission"); } catch (e) { console.warn("request_notification_permission:", e); }
   }
 
   async function checkPendingOAuth() {
@@ -33,7 +33,7 @@
       if (result?.scheme && result?.code) {
         await processOAuthCode(result.scheme, result.code);
       }
-    } catch (_) {}
+    } catch (e) { console.warn("checkPendingOAuth:", e); }
   }
 
   async function processOAuthCode(scheme, code) {
@@ -144,7 +144,7 @@
 <div class="header">
   <div style="display: flex; align-items: center; gap: 10px;">
     <h1 style="font-size: 18px; font-weight: 600;">Layream</h1>
-    <span style="font-size: 12px; color: var(--fg3);">v0.3.2-alpha</span>
+    <span style="font-size: 12px; color: var(--fg3);">v0.3.3-alpha</span>
   </div>
   <WorkspaceSelector />
 </div>

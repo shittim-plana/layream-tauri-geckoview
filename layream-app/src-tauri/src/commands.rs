@@ -174,6 +174,14 @@ async fn ensure_gca_token(
     Ok((client, valid_tokens.access_token))
 }
 
+/// Read gcaProject from persisted settings. Returns None on any failure
+/// so callers always have a graceful fallback.
+fn load_gca_project(app: &tauri::AppHandle) -> Option<String> {
+    let data_dir = persistence::get_data_dir(app).ok()?;
+    let settings = persistence::load_settings(&data_dir).ok()?;
+    settings.get("gcaProject").and_then(|v| v.as_str()).map(|s| s.to_string())
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub fn poll_stream_chunks(state: State<'_, StreamBufferState>) -> Result<Vec<String>, String> {
     let mut guard = state.buffer.lock().map_err(|e| format!("lock poisoned: {e}"))?;
@@ -638,9 +646,12 @@ pub async fn chat_gca(
         if let Ok(mut buf) = buffer_clone.lock() { buf.push(text.to_string()); }
     };
 
+    // load gcaProject from settings (graceful fallback to None)
+    let gca_project = load_gca_project(&app);
+
     let start = std::time::Instant::now();
     let result = gca::stream_generate(
-        &client, &access_token, &model, None, &request, on_chunk,
+        &client, &access_token, &model, gca_project.as_deref(), &request, on_chunk,
         Some(cancel),
     ).await;
     let elapsed = start.elapsed().as_millis();
@@ -832,6 +843,19 @@ pub async fn gca_oauth_start(
         }
     });
 
+    Ok(auth_url)
+}
+
+/// Returns the GCA OAuth authorization URL using the deep link redirect URI
+/// (for GeckoView in-app OAuth, without starting a loopback TCP server).
+#[tauri::command(rename_all = "snake_case")]
+pub fn gca_oauth_url() -> Result<String, String> {
+    let auth_url = format!(
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=select_account+consent",
+        vertex_auth::uri_encode(GCA_OAUTH_CLIENT_ID),
+        vertex_auth::uri_encode(GCA_REDIRECT_URI),
+        vertex_auth::uri_encode(GCA_OAUTH_SCOPE),
+    );
     Ok(auth_url)
 }
 
@@ -1054,6 +1078,35 @@ pub async fn gca_check_opt_out(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub async fn cmd_gca_load_project(
+    state: State<'_, AuthState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let (client, access_token) = ensure_gca_token(&state, &app).await?;
+
+    // opt-out check (fire-and-forget warning on failure)
+    if let Err(e) = gca::check_and_opt_out(&client, &access_token).await {
+        log::warn!("GCA opt-out check failed: {e}");
+    }
+
+    // load project id
+    let project_id = gca::load_code_assist(&client, &access_token)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // persist to settings
+    let data_dir = persistence::get_data_dir(&app)?;
+    let mut settings = persistence::load_settings(&data_dir)
+        .unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(obj) = settings.as_object_mut() {
+        obj.insert("gcaProject".to_string(), Value::String(project_id.clone()));
+    }
+    persistence::save_settings(&data_dir, &settings)?;
+
+    Ok(project_id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub async fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
@@ -1160,6 +1213,23 @@ pub async fn open_in_browser(app: tauri::AppHandle, url: String, package: String
     {
         use tauri_plugin_opener::OpenerExt;
         app.opener().open_url(&url, None::<&str>).map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn open_geckoview_oauth(app: tauri::AppHandle, url: String, redirect_uri_prefix: String) -> Result<Value, String> {
+    #[cfg(target_os = "android")]
+    {
+        let handle = app.state::<crate::browser::BrowserHandle<tauri::Wry>>();
+        handle
+            .0
+            .run_mobile_plugin::<Value>("openGeckoViewOAuth", format!("{}|{}", url, redirect_uri_prefix))
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, url, redirect_uri_prefix);
+        Err("GeckoView OAuth is only available on Android".into())
     }
 }
 
@@ -1338,11 +1408,14 @@ pub async fn generate_user_message(
                 tools: None,
             };
 
+            // load gcaProject from settings (graceful fallback to None)
+            let gca_project = load_gca_project(&app);
+
             gca::generate_non_streaming(
                 &client,
                 &access_token,
                 &model,
-                None,
+                gca_project.as_deref(),
                 &request,
             )
             .await
@@ -1559,6 +1632,12 @@ pub fn library_load_module(id: String, app: tauri::AppHandle) -> Result<Value, S
 pub fn library_delete_module(id: String, app: tauri::AppHandle) -> Result<(), String> {
     let data_dir = persistence::get_data_dir(&app)?;
     persistence::library_delete(&data_dir, persistence::LIB_KIND_MODULE, &id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn cmd_save_module(id: String, name: String, data: Value, app: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::library_update(&data_dir, persistence::LIB_KIND_MODULE, &id, &name, &data)
 }
 
 #[tauri::command(rename_all = "snake_case")]

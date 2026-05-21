@@ -142,6 +142,54 @@ class BrowserPlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     @Command
+    fun openGeckoViewOAuth(invoke: Invoke) {
+        try {
+            val combined = invoke.parseArgs(String::class.java)
+            // Format: "authUrl|redirectUriPrefix"
+            val sep = combined.indexOf("|")
+            if (sep < 0) {
+                invoke.reject("Expected format: authUrl|redirectUriPrefix")
+                return
+            }
+            val authUrl = combined.substring(0, sep)
+            val redirectUriPrefix = combined.substring(sep + 1)
+
+            val mainActivity = activity as? MainActivity
+            if (mainActivity == null) {
+                invoke.reject("Activity is not MainActivity — cannot access GeckoRuntime")
+                return
+            }
+            val runtime = MainActivity.getOrCreateRuntime(mainActivity)
+
+            activity.runOnUiThread {
+                try {
+                    val dialog = OAuthDialog(
+                        context = activity,
+                        runtime = runtime,
+                        authUrl = authUrl,
+                        redirectUriPrefix = redirectUriPrefix,
+                        onResult = { code, error ->
+                            val result = JSObject()
+                            if (code != null) {
+                                result.put("code", code)
+                            }
+                            if (error != null) {
+                                result.put("error", error)
+                            }
+                            invoke.resolve(result)
+                        }
+                    )
+                    dialog.show()
+                } catch (ex: Exception) {
+                    invoke.reject("Failed to open OAuth dialog: ${ex.message}")
+                }
+            }
+        } catch (ex: Exception) {
+            invoke.reject(ex.message)
+        }
+    }
+
+    @Command
     fun getPendingOAuth(invoke: Invoke) {
         try {
             val file = activity.filesDir.resolve("pending_oauth.txt")

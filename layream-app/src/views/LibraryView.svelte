@@ -1,6 +1,19 @@
 <script>
   import { onMount } from "svelte";
   import { invoke } from "../lib/tauri.js";
+  import ModuleEditView from "./ModuleEditView.svelte";
+
+  // --- Module edit state ---
+  let editingModule = $state(null); // { id, name } | null
+
+  function openModuleEdit(id, name) {
+    editingModule = { id, name };
+  }
+
+  function closeModuleEdit() {
+    editingModule = null;
+    refresh("modules");
+  }
 
   // --- Module activation state ---
   let enabledModules = $state([]);   // string[] of active module IDs
@@ -9,7 +22,8 @@
     try {
       const s = await invoke("cmd_load_settings") || {};
       enabledModules = Array.isArray(s.enabledModules) ? s.enabledModules : [];
-    } catch (_) {
+    } catch (e) {
+      console.warn("loadEnabledModules:", e);
       enabledModules = [];
     }
   }
@@ -230,6 +244,13 @@
   });
 </script>
 
+{#if editingModule}
+  <ModuleEditView
+    moduleId={editingModule.id}
+    moduleName={editingModule.name}
+    onBack={closeModuleEdit}
+  />
+{:else}
 <div>
   {#if error}
     <div class="card" style="border-color: var(--red); color: var(--red);">
@@ -314,7 +335,7 @@
                     onmouseleave={() => endPress(k.id, item)}
                     oncontextmenu={(e) => { e.preventDefault(); askDelete(k.id, item.id, item.name); }}
                     onkeydown={(e) => { if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); askDelete(k.id, item.id, item.name); } }}
-                    style="display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 10px 14px; {k.id === 'modules' ? 'padding-left: 6px;' : ''} background: transparent; border: 0; color: inherit; text-align: left; cursor: pointer; font: inherit;"
+                    style="display: flex; flex-direction: column; align-items: flex-start; gap: 2px; flex: 1; padding: 10px 14px; {k.id === 'modules' ? 'padding-left: 6px;' : ''} background: transparent; border: 0; color: inherit; text-align: left; cursor: pointer; font: inherit;"
                   >
                     <span style="font-size: 14px; color: var(--fg1); word-break: break-all;">
                       {item.name}
@@ -324,6 +345,20 @@
                     </span>
                     <span style="font-size: 11px; color: var(--fg3);">{formatTime(item.created_at)}</span>
                   </button>
+                  {#if k.id === "modules"}
+                    <button
+                      type="button"
+                      class="btn-icon"
+                      onclick={(e) => { e.stopPropagation(); openModuleEdit(item.id, item.name); }}
+                      title="편집"
+                      style="padding: 8px 12px; flex-shrink: 0;"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;">
+                        <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                        <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                      </svg>
+                    </button>
+                  {/if}
                 </div>
               </li>
             {/each}
@@ -361,3 +396,4 @@
     </div>
   {/if}
 </div>
+{/if}

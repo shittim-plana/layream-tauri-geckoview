@@ -292,6 +292,41 @@ pub fn library_load(data_dir: &Path, kind: &str, id: &str) -> Result<Value, Stri
     Ok(item.data)
 }
 
+/// Updates an existing library item's name and/or data in place, preserving
+/// its id and created_at. Uses atomic tmp+rename like library_save.
+pub fn library_update(
+    data_dir: &Path,
+    kind: &str,
+    id: &str,
+    name: &str,
+    data: &Value,
+) -> Result<(), String> {
+    if !is_safe_id(id) {
+        return Err(format!("invalid id: {}", id));
+    }
+    let dir = library_dir(data_dir, kind);
+    let final_path = dir.join(format!("{}.json", id));
+    if !final_path.exists() {
+        return Err(format!("not found: {}/{}", kind, id));
+    }
+
+    // Preserve the original created_at timestamp.
+    let existing_json = fs::read_to_string(&final_path).map_err(|e| e.to_string())?;
+    let existing: LibraryItem = serde_json::from_str(&existing_json).map_err(|e| e.to_string())?;
+
+    let item = LibraryItem {
+        id: id.to_string(),
+        name: name.to_string(),
+        created_at: existing.created_at,
+        data: data.clone(),
+    };
+    let json = serde_json::to_string_pretty(&item).map_err(|e| e.to_string())?;
+    let tmp_path = dir.join(format!("{}.json.tmp", id));
+    fs::write(&tmp_path, json.as_bytes()).map_err(|e| e.to_string())?;
+    fs::rename(&tmp_path, &final_path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub fn library_delete(data_dir: &Path, kind: &str, id: &str) -> Result<(), String> {
     if !is_safe_id(id) {
         return Err(format!("invalid id: {}", id));

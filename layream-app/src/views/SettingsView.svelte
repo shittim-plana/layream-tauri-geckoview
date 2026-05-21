@@ -43,6 +43,7 @@
   let gcaUserEmail = $state("");
   let gcaServiceTier = $state("");
   let gcaOptOut = $state(false);
+  let gcaProject = $state("");
   let gcaConfig = $state({
     temperature: 0.9,
     top_p: undefined,
@@ -167,7 +168,7 @@
       }
     } catch (e) {
       dbg(`openWithBrowserPicker failed: ${e}`);
-      try { await invoke("open_custom_tab", { url }); } catch (_) {}
+      try { await invoke("open_custom_tab", { url }); } catch (e2) { console.warn("open_custom_tab fallback:", e2); }
     }
   }
 
@@ -179,16 +180,55 @@
     } catch (e) { dbg(`open_in_browser failed: ${e}`); }
   }
 
+  // Redirect URI prefixes for GeckoView OAuth intercept.
+  // These must match the schemes registered for deep links in the OAuth console.
+  const VERTEX_REDIRECT_PREFIX = "com.googleusercontent.apps.317210024447";
+  const GCA_REDIRECT_PREFIX = "com.googleusercontent.apps.681255809395";
+
+  /**
+   * Attempt OAuth inside a GeckoView dialog. Returns { code } on success,
+   * { error } on user cancel or failure, or null if GeckoView is unavailable.
+   */
+  async function tryGeckoViewOAuth(authUrl, redirectPrefix) {
+    try {
+      const result = await invoke("open_geckoview_oauth", {
+        url: authUrl,
+        redirect_uri_prefix: redirectPrefix,
+      });
+      return result;
+    } catch (e) {
+      dbg(`GeckoView OAuth unavailable: ${e}`);
+      return null;
+    }
+  }
+
   async function startVertexAuth() {
     dbg("startVertexAuth: calling invoke...");
     try {
       const url = await invoke("vertex_oauth_start");
       dbg(`got url type=${typeof url}, val=${String(url)?.slice(0, 100)}`);
-      if (url) {
-        await openWithBrowserPicker(url);
-      } else {
-        dbg("url is falsy!");
+      if (!url) { dbg("url is falsy!"); return; }
+
+      // Try in-app GeckoView OAuth first
+      const geckoResult = await tryGeckoViewOAuth(url, VERTEX_REDIRECT_PREFIX);
+      if (geckoResult?.code) {
+        dbg("GeckoView OAuth got code, exchanging...");
+        const result = await invoke("vertex_oauth_callback", { code: geckoResult.code });
+        dbg(`vertex_oauth_callback: ${result}`);
+        checkVertexStatus();
+        return;
       }
+      if (geckoResult?.error && geckoResult.error !== "cancelled") {
+        dbg(`GeckoView OAuth error: ${geckoResult.error}`);
+      }
+      if (geckoResult?.error === "cancelled") {
+        dbg("GeckoView OAuth cancelled by user");
+        return;
+      }
+
+      // Fallback: open in external browser
+      dbg("Falling back to external browser...");
+      await openWithBrowserPicker(url);
     } catch (e) { dbg(`Vertex auth CATCH: ${e}`); }
   }
 
@@ -249,6 +289,29 @@
   async function startGcaAuth() {
     dbg("startGcaAuth...");
     try {
+      // Try in-app GeckoView OAuth first (uses deep link redirect URI, no loopback)
+      const geckoUrl = await invoke("gca_oauth_url");
+      if (geckoUrl) {
+        const geckoResult = await tryGeckoViewOAuth(geckoUrl, GCA_REDIRECT_PREFIX);
+        if (geckoResult?.code) {
+          dbg("GeckoView GCA OAuth got code, exchanging...");
+          const result = await invoke("gca_oauth_callback", { code: geckoResult.code });
+          dbg(`gca_oauth_callback: ${result}`);
+          checkGcaStatus();
+          loadGcaProfile();
+          return;
+        }
+        if (geckoResult?.error === "cancelled") {
+          dbg("GeckoView GCA OAuth cancelled by user");
+          return;
+        }
+        if (geckoResult?.error) {
+          dbg(`GeckoView GCA OAuth error: ${geckoResult.error}`);
+        }
+      }
+
+      // Fallback: loopback server + external browser
+      dbg("Falling back to external browser (loopback)...");
       const url = await invoke("gca_oauth_start");
       dbg(`got url: ${url?.slice(0, 80)}...`);
       if (url) {
@@ -263,13 +326,35 @@
     gcaUserName = ""; gcaUserEmail = ""; gcaServiceTier = ""; gcaOptOut = false;
   }
 
+  let gcaProjectLoading = $state(false);
+
   async function loadGcaProfile() {
     try {
       const projectId = await invoke("gca_load_code_assist");
-      if (projectId) gcaServiceTier = `Project: ${projectId}`;
+      if (projectId) {
+        gcaServiceTier = `Project: ${projectId}`;
+        gcaProject = projectId;
+      }
       const optOut = await invoke("gca_check_opt_out");
       gcaOptOut = optOut;
     } catch (e) { console.error("GCA profile load failed:", e); dbg(`GCA profile error: ${e}`); }
+  }
+
+  async function loadGcaProject() {
+    gcaProjectLoading = true;
+    try {
+      const projectId = await invoke("cmd_gca_load_project");
+      if (projectId) {
+        gcaProject = projectId;
+        gcaServiceTier = `Project: ${projectId}`;
+        scheduleSettingsSave();
+        dbg(`GCA project loaded: ${projectId}`);
+      }
+    } catch (e) {
+      console.error("GCA project load failed:", e);
+      dbg(`GCA project error: ${e}`);
+    }
+    gcaProjectLoading = false;
   }
 
   function exportGcaConfig() {
@@ -348,7 +433,7 @@
       userName,
       chatProvider, summaryProvider, embeddingProvider,
       vertexProjectId, vertexRegion, vertexModel, vertexEmbeddingModel, vertexConfig,
-      gcaModel, gcaConfig,
+      gcaModel, gcaConfig, gcaProject,
       mistralKey, mistralModel, mistralConfig,
       voyageKey, voyageModel,
     };
@@ -367,6 +452,7 @@
     if (s.vertexConfig) vertexConfig = { ...vertexConfig, ...s.vertexConfig };
     if (s.gcaModel !== undefined) gcaModel = s.gcaModel;
     if (s.gcaConfig) gcaConfig = { ...gcaConfig, ...s.gcaConfig };
+    if (s.gcaProject !== undefined) gcaProject = s.gcaProject;
     if (s.mistralKey !== undefined) mistralKey = s.mistralKey;
     if (s.mistralModel !== undefined) mistralModel = s.mistralModel;
     if (s.mistralConfig) mistralConfig = { ...mistralConfig, ...s.mistralConfig };
@@ -563,10 +649,18 @@
             <div>Tier: {gcaServiceTier || "Unknown"} · Opt-out: {gcaOptOut ? "Yes" : "No"}</div>
           </div>
         {/if}
-        <div style="display: flex; gap: 6px; margin-bottom: 12px;">
+        <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px;">
           <button class="btn btn-sm btn-secondary" onclick={checkGcaStatus}>Refresh Status</button>
+          <button class="btn btn-sm btn-secondary" onclick={loadGcaProject} disabled={gcaProjectLoading}>
+            {gcaProjectLoading ? "..." : "프로젝트 가져오기"}
+          </button>
           <button class="btn btn-sm btn-danger" onclick={disconnectGca}>Disconnect</button>
         </div>
+        {#if gcaProject}
+          <div style="font-size: 12px; color: var(--fg2); margin-bottom: 8px; padding: 6px 8px; background: var(--bg3); border-radius: var(--radius-sm);">
+            Project: {gcaProject}
+          </div>
+        {/if}
       {:else}
         <button class="btn btn-primary btn-block" onclick={startGcaAuth}>Connect</button>
       {/if}

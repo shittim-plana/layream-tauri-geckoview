@@ -23,6 +23,25 @@
   let editingMsgId = $state(null);
   let editingText = $state("");
   let error = $state("");
+  let chatProvider = $state("");   // active provider label for indicator
+  let chatInputEl;                 // ref for auto-focus
+
+  // ── Fork (branching) state ──────────────────────────────────────────
+  // Git branching model:
+  //   message = commit (chatId = commit hash)
+  //   linear conversation = main branch
+  //   fork = new branch from a specific commit (forkPoint)
+  //   each branch has its own head (latest message)
+  //   branch switching = git checkout (activeBranchId change)
+  //
+  // Session persists: messages[], branches[], activeBranchId
+  // Each message: { chatId, parentId, branchId, role, text, time, ... }
+  // Each branch:  { id, name, headId, forkPoint }
+  const MAIN_BRANCH_ID = "main";
+  let branches = $state([{ id: MAIN_BRANCH_ID, name: "main", headId: null, forkPoint: null }]);
+  let activeBranchId = $state(MAIN_BRANCH_ID);
+  // UI: which message's fork dropdown is open
+  let forkDropdownId = $state(null);
 
   // Preset toggle UI state — keys from customPromptTemplateToggle, values
   // are booleans. Defaults to all-ON so existing behaviour is preserved
@@ -70,6 +89,128 @@
     return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
+  // ── Fork pure functions ─────────────────────────────────────────────
+  // These operate on the flat messages array + branches metadata to
+  // produce the visible message chain for a given branch.
+
+  /** Migrate legacy sessions: messages without parentId/branchId are treated
+   *  as a linear "main" chain. Assigns parentId from array order and
+   *  branchId = MAIN_BRANCH_ID. Returns { messages, branches, activeBranchId }. */
+  function migrateSession(msgs, savedBranches, savedActiveBranchId) {
+    if (!Array.isArray(msgs) || msgs.length === 0) {
+      return {
+        messages: [],
+        branches: [{ id: MAIN_BRANCH_ID, name: "main", headId: null, forkPoint: null }],
+        activeBranchId: MAIN_BRANCH_ID,
+      };
+    }
+
+    // If first message already has branchId, session is already migrated
+    if (msgs[0].branchId) {
+      return {
+        messages: msgs,
+        branches: savedBranches && savedBranches.length > 0
+          ? savedBranches
+          : [{ id: MAIN_BRANCH_ID, name: "main", headId: msgs[msgs.length - 1].chatId, forkPoint: null }],
+        activeBranchId: savedActiveBranchId || MAIN_BRANCH_ID,
+      };
+    }
+
+    // Legacy migration: assign parentId chain and branchId
+    const migrated = msgs.map((m, i) => ({
+      ...m,
+      parentId: i === 0 ? null : msgs[i - 1].chatId,
+      branchId: MAIN_BRANCH_ID,
+    }));
+
+    const headId = migrated.length > 0 ? migrated[migrated.length - 1].chatId : null;
+    return {
+      messages: migrated,
+      branches: [{ id: MAIN_BRANCH_ID, name: "main", headId, forkPoint: null }],
+      activeBranchId: MAIN_BRANCH_ID,
+    };
+  }
+
+  /** Build a lookup from chatId to message for O(1) access. */
+  function buildIndex(msgs) {
+    const idx = new Map();
+    for (const m of msgs) idx.set(m.chatId, m);
+    return idx;
+  }
+
+  /** Walk from a leaf message back to root via parentId chain.
+   *  Returns messages in root-to-leaf order (conversation order). */
+  function getChainToRoot(msgs, leafId) {
+    const idx = buildIndex(msgs);
+    const chain = [];
+    let current = leafId;
+    // Safety: max iterations to prevent infinite loops from corrupt data
+    let safety = msgs.length + 1;
+    while (current && safety-- > 0) {
+      const msg = idx.get(current);
+      if (!msg) break;
+      chain.push(msg);
+      current = msg.parentId;
+    }
+    chain.reverse();
+    return chain;
+  }
+
+  /** Get the visible messages for the active branch.
+   *  Pure function: messages array + branches + activeBranchId → visible messages.
+   *  Walks from the branch's head back to root via parentId. */
+  function getVisibleMessages(msgs, branchList, activeId) {
+    const branch = branchList.find(b => b.id === activeId);
+    if (!branch || !branch.headId) return [];
+    return getChainToRoot(msgs, branch.headId);
+  }
+
+  /** Count how many child branches fork from a given message chatId. */
+  function countForks(branchList, chatId) {
+    return branchList.filter(b => b.forkPoint === chatId).length;
+  }
+
+  /** Get branches that fork from a given message chatId. */
+  function getBranchesAtForkPoint(branchList, chatId) {
+    return branchList.filter(b => b.forkPoint === chatId);
+  }
+
+  /** Update the head of a branch. Returns new branches array. */
+  function updateBranchHead(branchList, branchId, newHeadId) {
+    return branchList.map(b =>
+      b.id === branchId ? { ...b, headId: newHeadId } : b
+    );
+  }
+
+  /** Create a new branch forking from forkPointId.
+   *  Returns { newBranch, branches: updatedBranchesList }. */
+  function createForkBranch(branchList, forkPointId, name) {
+    const id = newChatId();
+    const newBranch = { id, name, headId: forkPointId, forkPoint: forkPointId };
+    return { newBranch, branches: [...branchList, newBranch] };
+  }
+
+  /** Append a message to the flat array and update the branch head.
+   *  parentId is the current head of the branch. Returns { messages, branches, newMsg }. */
+  function appendMessage(msgs, branchList, branchId, role, text, time, extraFields) {
+    const branch = branchList.find(b => b.id === branchId);
+    const parentId = branch?.headId || null;
+    const chatId = newChatId();
+    const newMsg = { chatId, parentId, branchId, role, text, time, ...(extraFields || {}) };
+    const newMsgs = [...msgs, newMsg];
+    const newBranches = updateBranchHead(branchList, branchId, chatId);
+    return { messages: newMsgs, branches: newBranches, newMsg };
+  }
+
+  // ── Derived state ───────────────────────────────────────────────────
+  // visibleMessages is computed from messages + branches + activeBranchId.
+  let visibleMessages = $derived(getVisibleMessages(messages, branches, activeBranchId));
+
+  // ── Session serialization helpers ───────────────────────────────────
+  function sessionPayload() {
+    return { messages, activeToggles, branches, activeBranchId };
+  }
+
   onMount(async () => {
     if (isTauri()) {
       try {
@@ -85,7 +226,7 @@
           clearTimeout(sessionSaveTimeout);
           if (sessionLoaded) {
             try {
-              await invoke("cmd_save_session", { session: { messages, activeToggles } });
+              await invoke("cmd_save_session", { session: sessionPayload() });
             } catch (e) { console.error("ChatView app-flush save failed:", e); }
           }
         });
@@ -94,11 +235,18 @@
         flashError("Event listener setup failed — streaming may not work");
       }
     }
-    // Load persisted chat session
+    // Load persisted chat session (with backward-compatible migration)
     try {
       const savedSession = await invoke("cmd_load_session");
       if (savedSession?.messages?.length && messages.length === 0) {
-        messages = savedSession.messages;
+        const migrated = migrateSession(
+          savedSession.messages,
+          savedSession.branches,
+          savedSession.activeBranchId,
+        );
+        messages = migrated.messages;
+        branches = migrated.branches;
+        activeBranchId = migrated.activeBranchId;
       }
       if (savedSession?.activeToggles && typeof savedSession.activeToggles === "object") {
         activeToggles = savedSession.activeToggles;
@@ -109,10 +257,13 @@
     }
     sessionLoaded = true;
 
-    // Expose interface to parent
+    // Load provider label for indicator
+    loadProviderLabel();
+
+    // Expose interface to parent — getMessages returns visible branch only
     onReady?.({
       sendChatMessage,
-      getMessages: () => messages,
+      getMessages: () => visibleMessages,
     });
   });
 
@@ -120,10 +271,8 @@
     if (unlisten) unlisten();
     if (unlistenAppFlush) unlistenAppFlush();
     // Flush pending session save immediately before clearing timeout.
-    // onDestroy: UI state updates are not visible, so console.error is the
-    // maximum viable handling — no flashError.
     if (sessionLoaded && messages.length > 0) {
-      invoke("cmd_save_session", { session: { messages, activeToggles } }).catch(e => console.error("session save on destroy failed:", e));
+      invoke("cmd_save_session", { session: sessionPayload() }).catch(e => console.error("session save on destroy failed:", e));
     }
     clearTimeout(sessionSaveTimeout);
   });
@@ -133,20 +282,22 @@
     streamingText;
     if (chatBottom) {
       requestAnimationFrame(() => {
-        chatBottom.scrollIntoView({ block: "end", behavior: "auto" });
+        chatBottom.scrollIntoView({ block: "end", behavior: "smooth" });
       });
     }
   });
 
   $effect(() => {
     const msgCount = messages.length;
-    // Read activeToggles so the effect re-runs when toggles change too.
+    // Read reactive deps so the effect re-runs when they change.
     const _toggleSnapshot = activeToggles;
+    const _branchSnapshot = branches;
+    const _activeBranchSnapshot = activeBranchId;
     if (sessionLoaded && msgCount > 0) {
       clearTimeout(sessionSaveTimeout);
       sessionSaveTimeout = setTimeout(async () => {
         try {
-          await invoke("cmd_save_session", { session: { messages, activeToggles } });
+          await invoke("cmd_save_session", { session: sessionPayload() });
         } catch (e) {
           console.error("Session save failed:", e);
           flashError(`Session save failed: ${e}`);
@@ -187,8 +338,6 @@
     // first_mes auto-insertion: when starting from an empty session, seed
     // the chat history with the character's greeting (role: "char", matching
     // Layream's stored convention — see msgs.map below mapping char→model).
-    // Saved sessions are loaded in onMount before any send, so messages.length === 0
-    // here implies a genuinely fresh chat, not a race with session restore.
     // Load character once — reused for first_mes, prompt assembly, and module lorebook.
     let loadedCharacter = null;
     try {
@@ -204,12 +353,17 @@
         if (allGreetings.length > 0) {
           greetings = allGreetings;
           greetingIndex = 0;
-          messages = [...messages, { chatId: newChatId(), role: "char", text: allGreetings[0], time: new Date().toLocaleTimeString() }];
+          const result = appendMessage(messages, branches, activeBranchId, "char", allGreetings[0], new Date().toLocaleTimeString());
+          messages = result.messages;
+          branches = result.branches;
         }
       } catch (e) { console.error("first_mes load failed:", e); }
     }
 
-    messages = [...messages, { chatId: newChatId(), role: "user", text: userMsg, time: new Date().toLocaleTimeString() }];
+    // Append user message to the active branch
+    const userResult = appendMessage(messages, branches, activeBranchId, "user", userMsg, new Date().toLocaleTimeString());
+    messages = userResult.messages;
+    branches = userResult.branches;
     streaming = true;
     streamingText = "";
 
@@ -219,7 +373,7 @@
         if (chunks?.length) {
           for (const chunk of chunks) streamingText += chunk;
         }
-      } catch (_) {}
+      } catch (e) { console.warn("poll_stream_chunks:", e); }
     }, 100);
 
     try {
@@ -296,7 +450,7 @@
               const active = (Array.isArray(modLorebook) ? modLorebook : []).filter(e => !e.disable);
               lorebook = [...lorebook, ...active];
             }
-          } catch (_) {}
+          } catch (e) { console.warn("module lorebook parse:", e); }
 
           // Merge enabled modules (multi-module support)
           try {
@@ -344,10 +498,10 @@
             if (type === "plain" || type === "jailbreak" || type === "cot") {
               let text = item.data || item.text || "";
               if (text.trim()) {
-                try { text = await invoke("evaluate_cbs", { input: text, char_name: charName, user_name: userName, toggles }); } catch (_) {}
+                try { text = await invoke("evaluate_cbs", { input: text, char_name: charName, user_name: userName, toggles }); } catch (e) { console.warn("evaluate_cbs:", e); }
                 for (const rx of regexList) {
                   if (rx.type === "editinput" || rx.type === "editoutput") continue;
-                  try { text = text.replace(new RegExp(rx.in, rx.flag || "g"), rx.out || ""); } catch (_) {}
+                  try { text = text.replace(new RegExp(rx.in, rx.flag || "g"), rx.out || ""); } catch (e) { console.warn("regex replace failed:", rx.in, e); }
                 }
                 if (text.trim()) emit(text);
               }
@@ -427,7 +581,9 @@
         }
       }
 
-      let msgs = messages.filter(m => m.role !== "error").map((m, idx, arr) => ({
+      // Use visible messages (active branch chain) for AI context —
+      // other branches must not leak into the prompt.
+      let msgs = visibleMessages.filter(m => m.role !== "error").map((m, idx, arr) => ({
         role: m.role === "char" ? "model" : m.role,
         text: idx === arr.length - 1 && m.role === "user" ? injectedUserMsg : m.text,
       }));
@@ -503,12 +659,14 @@
 
       const responseText = streamingText || result || "";
       if (responseText) {
-        messages = [...messages, { chatId: newChatId(), role: "char", text: responseText, time: new Date().toLocaleTimeString() }];
+        const charResult = appendMessage(messages, branches, activeBranchId, "char", responseText, new Date().toLocaleTimeString());
+        messages = charResult.messages;
+        branches = charResult.branches;
 
         // HyPA: trigger auto-summarization at unit boundaries
         if (hypaApi?.triggerSummarizationIfNeeded) {
           const h = settings.hypa || {};
-          hypaApi.triggerSummarizationIfNeeded(messages, h.summaryUnit).catch(e => {
+          hypaApi.triggerSummarizationIfNeeded(visibleMessages, h.summaryUnit).catch(e => {
             console.error("auto-summarize failed:", e);
             flashError("Auto-summarization failed");
           });
@@ -516,7 +674,9 @@
       }
       return responseText;
     } catch (e) {
-      messages = [...messages, { chatId: newChatId(), role: "error", text: `Error: ${e}`, time: new Date().toLocaleTimeString() }];
+      const errResult = appendMessage(messages, branches, activeBranchId, "error", `Error: ${e}`, new Date().toLocaleTimeString());
+      messages = errResult.messages;
+      branches = errResult.branches;
       throw e;
     } finally {
       clearInterval(pollInterval);
@@ -532,11 +692,15 @@
     chatInput = "";
     const chatTextarea = document.querySelector('.chat-input');
     if (chatTextarea) chatTextarea.style.height = 'auto';
+    // Reload provider label in case user changed settings between sends
+    loadProviderLabel();
     try {
       await sendChatMessage(userMsg);
-    } catch (_) {
-      // Error already appended to messages by sendChatMessage
+    } catch (e) {
+      console.error("sendMessage:", e);
     }
+    // Auto-focus input after response completes
+    requestAnimationFrame(() => { chatInputEl?.focus(); });
   }
 
   function autoResize(e) {
@@ -558,48 +722,80 @@
 
   function clearChat() {
     messages = [];
+    branches = [{ id: MAIN_BRANCH_ID, name: "main", headId: null, forkPoint: null }];
+    activeBranchId = MAIN_BRANCH_ID;
+    forkDropdownId = null;
     // Reset toggles to all-ON for the current preset defs
     for (const d of toggleDefs) activeToggles[d.key] = true;
     activeToggles = { ...activeToggles };
-    invoke("cmd_save_session", { session: { messages: [], activeToggles } }).catch(e => {
+    invoke("cmd_save_session", { session: { messages: [], activeToggles, branches, activeBranchId: MAIN_BRANCH_ID } }).catch(e => {
       console.error("session clear save failed:", e);
       flashError("Failed to clear session on disk");
     });
   }
 
   function deleteMessage(chatId) {
-    messages = messages.filter(m => m.chatId !== chatId);
+    // Deleting a message from the flat array. Re-parent children that
+    // pointed to this message, and update branch heads if needed.
+    const msg = messages.find(m => m.chatId === chatId);
+    if (!msg) return;
+
+    const updatedMessages = messages
+      .filter(m => m.chatId !== chatId)
+      .map(m => m.parentId === chatId ? { ...m, parentId: msg.parentId } : m);
+
+    // If any branch's headId was the deleted message, move head to parent
+    const updatedBranches = branches.map(b =>
+      b.headId === chatId ? { ...b, headId: msg.parentId } : b
+    );
+
+    messages = updatedMessages;
+    branches = updatedBranches;
   }
 
   async function regenerateResponse() {
-    if (streaming || messages.length === 0) return;
+    if (streaming || visibleMessages.length === 0) return;
 
     let savedAlts = [];
     let savedUserText = "";
 
-    const lastMsg = messages[messages.length - 1];
+    const lastMsg = visibleMessages[visibleMessages.length - 1];
     if (lastMsg.role === "char") {
       savedAlts = [...(lastMsg.alternatives || []), lastMsg.text];
     }
 
-    let trimmed = [...messages];
-    while (trimmed.length > 0 && (trimmed[trimmed.length - 1].role === "char" || trimmed[trimmed.length - 1].role === "error")) {
-      trimmed.pop();
+    // Work on visible messages to find the last user message
+    let trimIdx = visibleMessages.length - 1;
+    while (trimIdx >= 0 && (visibleMessages[trimIdx].role === "char" || visibleMessages[trimIdx].role === "error")) {
+      trimIdx--;
     }
-    if (trimmed.length === 0) return;
-    const lastUser = trimmed[trimmed.length - 1];
+    if (trimIdx < 0) return;
+    const lastUser = visibleMessages[trimIdx];
     if (lastUser.role !== "user") return;
     savedUserText = lastUser.text;
-    trimmed.pop();
-    messages = trimmed;
+
+    // Remove trailing messages from the flat array by their chatIds
+    const toRemove = new Set();
+    for (let i = visibleMessages.length - 1; i >= trimIdx; i--) {
+      toRemove.add(visibleMessages[i].chatId);
+    }
+    messages = messages.filter(m => !toRemove.has(m.chatId));
+
+    // Update branch head to the message before the removed ones
+    const newHead = trimIdx > 0 ? visibleMessages[trimIdx - 1].chatId : null;
+    branches = updateBranchHead(branches, activeBranchId, newHead);
 
     try {
       await sendChatMessage(savedUserText);
-    } catch (_) {}
+    } catch (e) { console.error("regenerateResponse:", e); }
 
-    if (savedAlts.length > 0 && messages.length > 0 && messages[messages.length - 1].role === "char") {
-      messages[messages.length - 1].alternatives = savedAlts;
-      messages = [...messages];
+    // Re-attach alternatives to the new response for swipe
+    const updatedVisible = getVisibleMessages(messages, branches, activeBranchId);
+    if (savedAlts.length > 0 && updatedVisible.length > 0 && updatedVisible[updatedVisible.length - 1].role === "char") {
+      const lastCharId = updatedVisible[updatedVisible.length - 1].chatId;
+      messages = messages.map(m =>
+        m.chatId === lastCharId ? { ...m, alternatives: savedAlts } : m
+      );
     }
   }
 
@@ -611,23 +807,31 @@
     }
     const total = msg._allResponses.length;
     msg._responseIdx = (msg._responseIdx + direction + total) % total;
-    msg.text = msg._allResponses[msg._responseIdx];
-    msg.alternatives = msg._allResponses.filter((_, i) => i !== msg._responseIdx);
-    messages = [...messages];
+    const newText = msg._allResponses[msg._responseIdx];
+    const newAlts = msg._allResponses.filter((_, i) => i !== msg._responseIdx);
+    // Update in the flat messages array
+    messages = messages.map(m =>
+      m.chatId === msg.chatId
+        ? { ...m, text: newText, alternatives: newAlts, _allResponses: msg._allResponses, _responseIdx: msg._responseIdx }
+        : m
+    );
   }
 
   function swipeGreeting(direction) {
     if (greetings.length < 2) return;
     greetingIndex = (greetingIndex + direction + greetings.length) % greetings.length;
-    if (messages.length > 0 && messages[0].role === "char") {
-      messages = [{ ...messages[0], text: greetings[greetingIndex] }, ...messages.slice(1)];
+    const firstVisible = visibleMessages.length > 0 ? visibleMessages[0] : null;
+    if (firstVisible && firstVisible.role === "char") {
+      messages = messages.map(m =>
+        m.chatId === firstVisible.chatId ? { ...m, text: greetings[greetingIndex] } : m
+      );
     }
   }
 
   async function cancelChat() {
     try {
       await invoke("cancel_chat");
-    } catch (_) {}
+    } catch (e) { console.warn("cancel_chat:", e); }
   }
 
   function startEdit(msg) {
@@ -648,6 +852,133 @@
     editingMsgId = null;
     editingText = "";
   }
+
+  /** Basic markdown rendering for char messages.
+   *  Handles: ```code blocks```, `inline code`, **bold**, *italic*, line breaks.
+   *  Escapes HTML first to prevent XSS, then applies markdown patterns. */
+  function renderMarkdown(text) {
+    if (!text) return "";
+    // Escape HTML entities
+    let html = text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+    // Fenced code blocks: ```lang\n...\n```
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, _lang, code) => {
+      return `<pre class="md-code-block"><code>${code.replace(/\n$/, "")}</code></pre>`;
+    });
+    // Inline code: `code`
+    html = html.replace(/`([^`\n]+)`/g, '<code class="md-inline-code">$1</code>');
+    // Bold: **text**
+    html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    // Italic: *text* (but not inside **)
+    html = html.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, "<em>$1</em>");
+
+    return html;
+  }
+
+  /** Regenerate response from a specific char message (not just the last one).
+   *  Trims all messages after the target, finds the preceding user message,
+   *  and re-sends it. Preserves alternatives for swipe navigation. */
+  async function regenerateFrom(targetMsg) {
+    if (streaming) return;
+
+    // Find the target in visible messages
+    const visIdx = visibleMessages.findIndex(m => m.chatId === targetMsg.chatId);
+    if (visIdx < 0) return;
+
+    // Collect existing alternatives from the target message
+    let savedAlts = [];
+    if (targetMsg.role === "char") {
+      savedAlts = [...(targetMsg.alternatives || []), targetMsg.text];
+    }
+
+    // Walk backwards from target to find the preceding user message
+    let trimIdx = visIdx;
+    while (trimIdx >= 0 && (visibleMessages[trimIdx].role === "char" || visibleMessages[trimIdx].role === "error")) {
+      trimIdx--;
+    }
+    if (trimIdx < 0) return;
+    const lastUser = visibleMessages[trimIdx];
+    if (lastUser.role !== "user") return;
+
+    const savedUserText = lastUser.text;
+
+    // Remove from trimIdx to end of visible chain from the flat array
+    const toRemove = new Set();
+    for (let i = visibleMessages.length - 1; i >= trimIdx; i--) {
+      toRemove.add(visibleMessages[i].chatId);
+    }
+    messages = messages.filter(m => !toRemove.has(m.chatId));
+
+    // Update branch head
+    const newHead = trimIdx > 0 ? visibleMessages[trimIdx - 1].chatId : null;
+    branches = updateBranchHead(branches, activeBranchId, newHead);
+
+    try {
+      await sendChatMessage(savedUserText);
+    } catch (e) { console.error("regenerateFromMsg:", e); }
+
+    // Re-attach alternatives to the new response for swipe
+    const updatedVisible = getVisibleMessages(messages, branches, activeBranchId);
+    if (savedAlts.length > 0 && updatedVisible.length > 0 && updatedVisible[updatedVisible.length - 1].role === "char") {
+      const lastCharId = updatedVisible[updatedVisible.length - 1].chatId;
+      messages = messages.map(m =>
+        m.chatId === lastCharId ? { ...m, alternatives: savedAlts } : m
+      );
+    }
+  }
+
+  /** Load provider label from settings — called on mount and before display. */
+  async function loadProviderLabel() {
+    try {
+      const settings = await invoke("cmd_load_settings") || {};
+      const p = settings.chatProvider || "vertex";
+      const labels = { vertex: "Vertex AI", gca: "GCA", mistral: "Mistral" };
+      chatProvider = labels[p] || p;
+    } catch (e) {
+      console.warn("loadProviderLabel:", e);
+      chatProvider = "";
+    }
+  }
+
+  /** Count of alternative responses for a char message (including current). */
+  function altCount(msg) {
+    if (!msg.alternatives?.length) return 0;
+    return (msg._allResponses?.length ?? (msg.alternatives.length + 1));
+  }
+
+  // ── Fork actions ────────────────────────────────────────────────────
+
+  /** Fork from a specific message: create a new branch starting from that point.
+   *  Like `git checkout -b <name>` from a specific commit. The new branch's
+   *  head is the fork point message itself. The user can then type a new message
+   *  which diverges from the original conversation. */
+  function forkFromMessage(chatId) {
+    const branchCount = branches.length;
+    const name = `분기 ${branchCount}`;
+    const result = createForkBranch(branches, chatId, name);
+    branches = result.branches;
+    activeBranchId = result.newBranch.id;
+    forkDropdownId = null;
+  }
+
+  /** Switch to a different branch (git checkout). */
+  function switchBranch(branchId) {
+    activeBranchId = branchId;
+    forkDropdownId = null;
+  }
+
+  /** Toggle the fork dropdown for a message. */
+  function toggleForkDropdown(chatId) {
+    forkDropdownId = forkDropdownId === chatId ? null : chatId;
+  }
+
+  /** Close fork dropdown when clicking outside. */
+  function closeForkDropdown() {
+    forkDropdownId = null;
+  }
 </script>
 
 <!--
@@ -656,28 +987,71 @@
   remains visible regardless of message volume — no fragile height
   calculations against viewport units.
 -->
-<div class="chat-view">
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="chat-view" onclick={closeForkDropdown}>
   {#if error}
     <div class="chat-error-toast">{error}</div>
   {/if}
 
+  {#if branches.length > 1}
+    <div class="branch-bar">
+      <svg class="branch-bar-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M6 3v12M18 9a3 3 0 100-6 3 3 0 000 6zM6 21a3 3 0 100-6 3 3 0 000 6zM18 9a9 9 0 01-9 9" />
+      </svg>
+      <select
+        class="branch-select"
+        value={activeBranchId}
+        onchange={(e) => switchBranch(e.target.value)}
+      >
+        {#each branches as branch}
+          <option value={branch.id}>
+            {branch.name}{branch.id === activeBranchId ? " (현재)" : ""}
+          </option>
+        {/each}
+      </select>
+      <span class="branch-count">{branches.length}개 브랜치</span>
+    </div>
+  {/if}
+
   <div class="chat-messages">
-    {#if messages.length === 0}
+    {#if visibleMessages.length === 0 && !streaming}
       <div class="empty-state">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
         </svg>
-        <p>Start a conversation to test your prompts</p>
-        <p style="font-size: 12px;">Configure API provider in Settings first</p>
+        <p>프롬프트를 테스트할 대화를 시작하세요</p>
+        <p class="empty-state-hint">1. Settings에서 API 프로바이더 설정</p>
+        <p class="empty-state-hint">2. Character 탭에서 캐릭터 로드</p>
+        <p class="empty-state-hint">3. Preset 탭에서 프리셋 로드</p>
+        <p class="empty-state-hint">4. 아래 입력창에 메시지를 보내세요</p>
       </div>
     {/if}
 
-    {#each messages as msg, i}
+    {#each visibleMessages as msg, i}
+      {@const forkCount = countForks(branches, msg.chatId)}
+      {@const branchesHere = getBranchesAtForkPoint(branches, msg.chatId)}
       <div class="message {msg.role}">
-        <div class="msg-actions">
-          <button class="msg-action-btn" onclick={() => startEdit(msg)} disabled={streaming || editingMsgId !== null} title="편집" aria-label="메시지 편집">✏</button>
-          <button class="msg-action-btn msg-delete-btn" onclick={() => deleteMessage(msg.chatId)} disabled={streaming} title="삭제" aria-label="메시지 삭제">×</button>
-        </div>
+        {#if msg.role !== "error"}
+          <div class="msg-actions">
+            <button
+              class="msg-action-btn msg-fork-btn"
+              onclick={(e) => { e.stopPropagation(); forkFromMessage(msg.chatId); }}
+              disabled={streaming}
+              title="포크 (분기 생성)"
+              aria-label="이 메시지에서 분기"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M6 3v12M18 9a3 3 0 100-6 3 3 0 000 6zM6 21a3 3 0 100-6 3 3 0 000 6zM18 9a9 9 0 01-9 9" />
+              </svg>
+            </button>
+            {#if msg.role === "char"}
+              <button class="msg-action-btn msg-regen-btn" onclick={() => regenerateFrom(msg)} disabled={streaming} title="여기서 재생성" aria-label="이 응답부터 재생성">↻</button>
+            {/if}
+            <button class="msg-action-btn" onclick={() => startEdit(msg)} disabled={streaming || editingMsgId !== null} title="편집" aria-label="메시지 편집">✏</button>
+            <button class="msg-action-btn msg-delete-btn" onclick={() => deleteMessage(msg.chatId)} disabled={streaming} title="삭제" aria-label="메시지 삭제">×</button>
+          </div>
+        {/if}
         {#if msg.chatId === editingMsgId}
           <div class="edit-area">
             <textarea
@@ -690,10 +1064,64 @@
               <button class="btn btn-sm btn-secondary edit-cancel-btn" onclick={cancelEdit}>취소</button>
             </div>
           </div>
+        {:else if msg.role === "error"}
+          <div class="message-bubble error-bubble">
+            <svg class="error-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" />
+            </svg>
+            <span>{msg.text}</span>
+          </div>
+          <div class="error-actions">
+            <button class="btn btn-sm btn-danger error-retry-btn" onclick={regenerateResponse} disabled={streaming}>다시 시도</button>
+          </div>
+        {:else if msg.role === "char"}
+          <div class="message-bubble">{@html renderMarkdown(msg.text)}</div>
         {:else}
           <div class="message-bubble">{msg.text}</div>
         {/if}
-        <span class="message-time">{msg.time}</span>
+
+        {#if msg.role !== "error"}
+          <span class="message-time">
+            {msg.time}
+            {#if msg.role === "char" && altCount(msg) > 0}
+              <span class="alt-badge">{altCount(msg)}</span>
+            {/if}
+          </span>
+        {:else}
+          <span class="message-time">{msg.time}</span>
+        {/if}
+
+        {#if forkCount > 0}
+          <div class="fork-indicator" style="position: relative;">
+            <button
+              class="fork-badge"
+              onclick={(e) => { e.stopPropagation(); toggleForkDropdown(msg.chatId); }}
+              aria-label="브랜치 목록 보기"
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M6 3v12M18 9a3 3 0 100-6 3 3 0 000 6zM6 21a3 3 0 100-6 3 3 0 000 6zM18 9a9 9 0 01-9 9" />
+              </svg>
+              {forkCount + 1}개 분기
+            </button>
+            {#if forkDropdownId === msg.chatId}
+              <div class="fork-dropdown" onclick={(e) => e.stopPropagation()}>
+                {#each branchesHere as branch}
+                  <button
+                    class="fork-dropdown-item"
+                    class:active={branch.id === activeBranchId}
+                    onclick={() => switchBranch(branch.id)}
+                  >
+                    <span class="fork-dropdown-name">{branch.name}</span>
+                    {#if branch.id === activeBranchId}
+                      <span class="fork-dropdown-current">현재</span>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
+
         {#if i === 0 && msg.role === "char" && greetings.length >= 2}
           <div class="swipe-nav">
             <button onclick={() => swipeGreeting(-1)} aria-label="이전 인사말">◀</button>
@@ -716,7 +1144,7 @@
       <div class="message char">
         <div class="message-bubble">
           {#if streamingText}
-            {streamingText}
+            {@html renderMarkdown(streamingText)}
           {:else}
             <div class="spinner" style="margin: 4px auto;"></div>
           {/if}
@@ -768,40 +1196,54 @@
   {/if}
 
   <div class="chat-input-bar">
-    {#if messages.length > 0}
-      <button class="btn btn-sm btn-secondary" onclick={clearChat} disabled={streaming} style="flex-shrink: 0; padding: 6px 10px; font-size: 11px; align-self: center;">Clear</button>
-    {/if}
-    {#if messages.length > 0 && messages[messages.length - 1].role === "char"}
-      <button class="btn btn-sm btn-secondary" onclick={regenerateResponse} disabled={streaming} style="flex-shrink: 0; padding: 6px 10px; font-size: 11px; align-self: center;" title="응답 재생성" aria-label="응답 재생성">↻</button>
-    {/if}
-    <textarea
-      class="chat-input"
-      rows="1"
-      placeholder="메시지를 입력하세요..."
-      bind:value={chatInput}
-      onkeydown={handleChatKeydown}
-      oninput={autoResize}
-      style="height: auto; min-height: 36px;"
-    ></textarea>
-    {#if streaming}
-      <button class="send-btn cancel" onclick={cancelChat} title="취소">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-          <rect x="6" y="6" width="12" height="12" rx="2" />
-        </svg>
-      </button>
-    {:else}
-      <button class="send-btn" onclick={sendMessage} disabled={!chatInput.trim()}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-        </svg>
-      </button>
-    {/if}
+    <div class="input-meta-row">
+      {#if chatProvider}
+        <span class="provider-badge">{chatProvider}</span>
+      {/if}
+      {#if branches.length > 1}
+        <span class="branch-badge">{branches.find(b => b.id === activeBranchId)?.name || activeBranchId}</span>
+      {/if}
+      {#if chatInput.length > 0}
+        <span class="char-count">{chatInput.length}자</span>
+      {/if}
+    </div>
+    <div class="input-row">
+      {#if visibleMessages.length > 0}
+        <button class="btn btn-sm btn-secondary" onclick={clearChat} disabled={streaming} style="flex-shrink: 0; padding: 6px 10px; font-size: 11px; align-self: center;">Clear</button>
+      {/if}
+      {#if visibleMessages.length > 0 && visibleMessages[visibleMessages.length - 1].role === "char"}
+        <button class="btn btn-sm btn-secondary" onclick={regenerateResponse} disabled={streaming} style="flex-shrink: 0; padding: 6px 10px; font-size: 11px; align-self: center;" title="응답 재생성" aria-label="응답 재생성">↻</button>
+      {/if}
+      <textarea
+        class="chat-input"
+        rows="1"
+        placeholder="메시지를 입력하세요..."
+        bind:value={chatInput}
+        bind:this={chatInputEl}
+        onkeydown={handleChatKeydown}
+        oninput={autoResize}
+        style="height: auto; min-height: 36px;"
+      ></textarea>
+      {#if streaming}
+        <button class="send-btn cancel" onclick={cancelChat} title="취소">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="6" y="6" width="12" height="12" rx="2" />
+          </svg>
+        </button>
+      {:else}
+        <button class="send-btn" onclick={sendMessage} disabled={!chatInput.trim()}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+          </svg>
+        </button>
+      {/if}
+    </div>
   </div>
 </div>
 
 <style>
   .chat-messages {
-    padding-bottom: 72px;
+    padding-bottom: 88px;
   }
   .chat-input-bar {
     position: fixed;
@@ -811,6 +1253,44 @@
     z-index: 50;
     background: var(--bg2);
     border-top: 1px solid var(--bg4);
+    display: flex;
+    flex-direction: column;
+  }
+  .input-meta-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 12px 0;
+    min-height: 18px;
+  }
+  .provider-badge {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--bg4);
+    padding: 1px 6px;
+    border-radius: 4px;
+    letter-spacing: 0.3px;
+  }
+  .branch-badge {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--fg2);
+    background: var(--bg3);
+    border: 1px solid var(--bg4);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+  .char-count {
+    font-size: 10px;
+    color: var(--fg3);
+    margin-left: auto;
+  }
+  .input-row {
+    display: flex;
+    gap: 8px;
+    padding: 6px 12px 12px;
+    align-items: flex-end;
   }
   .send-btn.cancel {
     background: var(--error, #e53935);
@@ -822,6 +1302,16 @@
     right: 2px;
     display: flex;
     gap: 2px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .message:hover .msg-actions,
+  .message:active .msg-actions {
+    opacity: 1;
+  }
+  /* On touch devices always show actions since there's no hover */
+  @media (pointer: coarse) {
+    .msg-actions { opacity: 1; }
   }
   .msg-action-btn {
     background: none;
@@ -833,6 +1323,8 @@
     opacity: 0.5;
   }
   .msg-action-btn:hover { opacity: 1; }
+  .msg-fork-btn:hover { color: var(--accent, #5c6bc0); }
+  .msg-regen-btn:hover { color: var(--accent); }
   .msg-delete-btn:hover { color: var(--error, #e53935); }
   .msg-action-btn:disabled { cursor: not-allowed; opacity: 0.25; }
   .edit-area {
@@ -897,6 +1389,110 @@
     box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   }
 
+  /* --- Branch Bar (top, visible when >1 branch) --- */
+  .branch-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: var(--bg3, #2a2a2e);
+    border-bottom: 1px solid var(--bg4);
+    font-size: 12px;
+    color: var(--fg3);
+  }
+  .branch-bar-icon {
+    flex-shrink: 0;
+    color: var(--accent, #5c6bc0);
+  }
+  .branch-select {
+    background: var(--bg2, #1e1e22);
+    color: var(--fg1, #e0e0e0);
+    border: 1px solid var(--bg4);
+    border-radius: var(--radius-sm, 4px);
+    padding: 3px 8px;
+    font-size: 12px;
+    cursor: pointer;
+    max-width: 200px;
+  }
+  .branch-count {
+    color: var(--fg3, #999);
+    font-size: 11px;
+    margin-left: auto;
+  }
+
+  /* --- Fork Indicator & Dropdown --- */
+  .fork-indicator {
+    display: inline-flex;
+    align-items: center;
+    margin-top: 4px;
+  }
+  .fork-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--bg3, #2a2a2e);
+    border: 1px solid var(--bg4);
+    border-radius: 10px;
+    padding: 2px 8px;
+    font-size: 11px;
+    color: var(--fg3, #999);
+    cursor: pointer;
+    user-select: none;
+  }
+  .fork-badge:hover {
+    color: var(--fg1, #e0e0e0);
+    border-color: var(--accent, #5c6bc0);
+  }
+  .fork-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 60;
+    background: var(--bg2, #1e1e22);
+    border: 1px solid var(--bg4);
+    border-radius: var(--radius-sm, 4px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    min-width: 160px;
+    max-width: 280px;
+    overflow: hidden;
+    margin-top: 4px;
+  }
+  .fork-dropdown-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 12px;
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--bg4);
+    color: var(--fg2, #ccc);
+    font-size: 12px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .fork-dropdown-item:last-child {
+    border-bottom: none;
+  }
+  .fork-dropdown-item:hover {
+    background: var(--bg3, #2a2a2e);
+  }
+  .fork-dropdown-item.active {
+    background: var(--bg3, #2a2a2e);
+    color: var(--accent, #5c6bc0);
+  }
+  .fork-dropdown-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fork-dropdown-current {
+    font-size: 10px;
+    color: var(--accent, #5c6bc0);
+    flex-shrink: 0;
+  }
+
   /* --- Preset Toggle Panel --- */
   .toggle-panel-wrapper {
     position: fixed;
@@ -957,5 +1553,96 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* --- Error Messages --- */
+  .message.error { align-items: flex-start; }
+  .error-bubble {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    background: rgba(248, 113, 113, 0.15);
+    border: 1px solid var(--red);
+    border-radius: 16px;
+    border-bottom-left-radius: 4px;
+    max-width: 85%;
+    padding: 10px 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--red);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .error-icon {
+    flex-shrink: 0;
+    margin-top: 1px;
+    color: var(--red);
+  }
+  .error-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .error-retry-btn {
+    font-size: 11px;
+    padding: 4px 10px;
+  }
+
+  /* --- Markdown in char messages --- */
+  .message.char .message-bubble :global(strong) {
+    font-weight: 700;
+    color: var(--fg);
+  }
+  .message.char .message-bubble :global(em) {
+    font-style: italic;
+  }
+  .message.char .message-bubble :global(.md-inline-code) {
+    background: var(--bg4);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+  }
+  .message.char .message-bubble :global(.md-code-block) {
+    background: var(--bg);
+    border: 1px solid var(--bg4);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    margin: 6px 0;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre;
+  }
+  .message.char .message-bubble :global(.md-code-block code) {
+    background: none;
+    padding: 0;
+    font-family: inherit;
+    font-size: inherit;
+  }
+
+  /* --- Alt badge (regeneration count) --- */
+  .alt-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: var(--bg4);
+    color: var(--fg2);
+    font-size: 10px;
+    font-weight: 600;
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+
+  /* --- Empty state hints --- */
+  .empty-state-hint {
+    font-size: 12px;
+    color: var(--fg3);
+    line-height: 1.8;
   }
 </style>

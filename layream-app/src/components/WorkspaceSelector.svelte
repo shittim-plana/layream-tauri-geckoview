@@ -23,7 +23,7 @@
       if (settings?.active_workspace_id) {
         activeId = settings.active_workspace_id;
       }
-    } catch (_) {}
+    } catch (e) { console.warn("WorkspaceSelector loadSettings:", e); }
   }
 
   async function loadWorkspaces() {

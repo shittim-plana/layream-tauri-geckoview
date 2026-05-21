@@ -38,41 +38,46 @@ pub fn highlight(input: &str) -> Vec<HighlightToken> {
             pos += 2;
 
             if let Some(end) = find_close(bytes, pos) {
-                tokens.push(HighlightToken {
-                    start: bracket_start,
-                    end: bracket_start + 2,
-                    kind: TokenKind::Bracket,
-                    depth,
-                });
-
                 let content = &input[bracket_start + 2..end];
                 let trimmed = content.trim();
                 let kind = classify(trimmed);
 
-                if trimmed.starts_with('#') {
+                let token_depth = if trimmed.starts_with('#') {
+                    // Opening tag: tokens get current (outer) depth, then increment
+                    let d = depth;
                     depth += 1;
-                }
+                    d
+                } else if trimmed.starts_with('/') {
+                    // Closing tag: decrement first, then tokens get new (outer) depth
+                    depth = depth.saturating_sub(1);
+                    depth
+                } else if trimmed.starts_with(':') {
+                    // :else and similar: belongs to the enclosing block's depth
+                    depth.saturating_sub(1)
+                } else {
+                    // Plain variables/macros: current depth
+                    depth
+                };
+
+                tokens.push(HighlightToken {
+                    start: bracket_start,
+                    end: bracket_start + 2,
+                    kind: TokenKind::Bracket,
+                    depth: token_depth,
+                });
 
                 tokens.push(HighlightToken {
                     start: bracket_start + 2,
                     end,
                     kind,
-                    depth: if trimmed.starts_with('/') {
-                        depth
-                    } else {
-                        depth.max(1) - if trimmed.starts_with('#') { 1 } else { 0 }
-                    },
+                    depth: token_depth,
                 });
-
-                if trimmed.starts_with('/') && depth > 0 {
-                    depth -= 1;
-                }
 
                 tokens.push(HighlightToken {
                     start: end,
                     end: end + 2,
                     kind: TokenKind::Bracket,
-                    depth,
+                    depth: token_depth,
                 });
 
                 pos = end + 2;
@@ -237,5 +242,111 @@ mod tests {
         let diags = check_blocks("hello{{/if}}");
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("unmatched"));
+    }
+
+    // --- Depth tracking tests ---
+
+    #[test]
+    fn depth_simple_if_block() {
+        // {{#if 1}}yes{{/if}}
+        // Tokens: {{ #if_1 }} {{ /if }}
+        // All at depth 0: opening tag is outer (0), closing tag is outer (0)
+        let tokens = highlight("{{#if 1}}yes{{/if}}");
+        assert_eq!(tokens.len(), 6);
+        let depths: Vec<usize> = tokens.iter().map(|t| t.depth).collect();
+        assert_eq!(depths, vec![0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn depth_nested_when_blocks() {
+        // {{#when a}}outer{{#when b}}inner{{/when}}outer2{{/when}}
+        let tokens = highlight("{{#when a}}outer{{#when b}}inner{{/when}}outer2{{/when}}");
+        assert_eq!(tokens.len(), 12);
+        let depths: Vec<usize> = tokens.iter().map(|t| t.depth).collect();
+        assert_eq!(
+            depths,
+            vec![
+                0, 0, 0, // {{#when a}}
+                1, 1, 1, // {{#when b}}
+                1, 1, 1, // {{/when}} closes inner, back to depth 1
+                0, 0, 0, // {{/when}} closes outer, back to depth 0
+            ]
+        );
+    }
+
+    #[test]
+    fn depth_triple_nested() {
+        // {{#when a}}{{#when b}}{{#when c}}deep{{/when}}{{/when}}{{/when}}
+        let tokens = highlight("{{#when a}}{{#when b}}{{#when c}}deep{{/when}}{{/when}}{{/when}}");
+        assert_eq!(tokens.len(), 18);
+        let depths: Vec<usize> = tokens.iter().map(|t| t.depth).collect();
+        assert_eq!(
+            depths,
+            vec![
+                0, 0, 0, // {{#when a}}
+                1, 1, 1, // {{#when b}}
+                2, 2, 2, // {{#when c}}
+                2, 2, 2, // {{/when}} closes c
+                1, 1, 1, // {{/when}} closes b
+                0, 0, 0, // {{/when}} closes a
+            ]
+        );
+    }
+
+    #[test]
+    fn depth_else_handling() {
+        // {{#if x}}a{{:else}}b{{/if}}
+        // :else belongs to the #if block at depth 0
+        let tokens = highlight("{{#if x}}a{{:else}}b{{/if}}");
+        assert_eq!(tokens.len(), 9);
+        let depths: Vec<usize> = tokens.iter().map(|t| t.depth).collect();
+        assert_eq!(
+            depths,
+            vec![
+                0, 0, 0, // {{#if x}}
+                0, 0, 0, // {{:else}}
+                0, 0, 0, // {{/if}}
+            ]
+        );
+    }
+
+    #[test]
+    fn depth_mixed_variables_inside_block() {
+        // {{#when a}}Hello {{char}}{{/when}}
+        // {{char}} is inside the block at depth 1
+        let tokens = highlight("{{#when a}}Hello {{char}}{{/when}}");
+        assert_eq!(tokens.len(), 9);
+        let depths: Vec<usize> = tokens.iter().map(|t| t.depth).collect();
+        assert_eq!(
+            depths,
+            vec![
+                0, 0, 0, // {{#when a}}
+                1, 1, 1, // {{char}}
+                0, 0, 0, // {{/when}}
+            ]
+        );
+    }
+
+    #[test]
+    fn depth_else_in_nested_block() {
+        // {{#when a}}{{#if x}}yes{{:else}}no{{/if}}{{/when}}
+        let tokens = highlight("{{#when a}}{{#if x}}yes{{:else}}no{{/if}}{{/when}}");
+        assert_eq!(tokens.len(), 15);
+        let depths: Vec<usize> = tokens.iter().map(|t| t.depth).collect();
+        assert_eq!(
+            depths,
+            vec![
+                0, 0, 0, // {{#when a}}
+                1, 1, 1, // {{#if x}}
+                1, 1, 1, // {{:else}} belongs to #if at depth 1
+                1, 1, 1, // {{/if}}
+                0, 0, 0, // {{/when}}
+            ]
+        );
+    }
+
+    #[test]
+    fn classify_else_as_control() {
+        assert_eq!(classify(":else"), TokenKind::Control);
     }
 }

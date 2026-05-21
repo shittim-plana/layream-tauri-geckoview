@@ -9,6 +9,7 @@ import android.view.ViewGroup
 import android.view.Window
 import android.widget.FrameLayout
 import android.widget.TextView
+import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
@@ -55,7 +56,7 @@ class OAuthDialog(
             override fun onLoadRequest(
                 session: GeckoSession,
                 request: GeckoSession.NavigationDelegate.LoadRequest
-            ): GeckoResult<Boolean>? {
+            ): GeckoResult<AllowOrDeny>? {
                 val url = request.uri
                 if (url.startsWith(redirectUriPrefix)) {
                     val uri = Uri.parse(url)
@@ -63,9 +64,9 @@ class OAuthDialog(
                     val error = uri.getQueryParameter("error")
                     resolve(code, error ?: if (code == null) "no code in redirect" else null)
                     dismiss()
-                    return GeckoResult.fromValue(false)
+                    return GeckoResult.fromValue(AllowOrDeny.DENY)
                 }
-                return GeckoResult.fromValue(true)
+                return GeckoResult.fromValue(AllowOrDeny.ALLOW)
             }
         }
 

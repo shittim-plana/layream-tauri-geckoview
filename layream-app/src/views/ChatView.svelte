@@ -173,6 +173,15 @@
     streaming = true;
     streamingText = "";
 
+    let pollInterval = setInterval(async () => {
+      try {
+        const chunks = await invoke("poll_stream_chunks");
+        if (chunks?.length) {
+          for (const chunk of chunks) streamingText += chunk;
+        }
+      } catch (_) {}
+    }, 100);
+
     try {
       await invoke("start_streaming", { text: "AI 응답 수신 중..." }).catch(e => console.error("start_streaming failed:", e));
 
@@ -450,6 +459,7 @@
       messages = [...messages, { chatId: newChatId(), role: "error", text: `Error: ${e}`, time: new Date().toLocaleTimeString() }];
       throw e;
     } finally {
+      clearInterval(pollInterval);
       await invoke("stop_streaming").catch(e => console.error("stop_streaming failed:", e));
       streaming = false;
       streamingText = "";

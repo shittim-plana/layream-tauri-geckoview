@@ -18,7 +18,7 @@ use layream_core::retry;
 const GCA_REDIRECT_URI: &str = "com.googleusercontent.apps.681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j:/oauth2callback";
 use layream_core::voyage;
 use serde_json::Value;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager, State};
 
 use std::collections::HashMap;
@@ -103,6 +103,16 @@ impl Default for StreamCancelState {
     }
 }
 
+pub struct StreamBufferState {
+    pub buffer: Arc<Mutex<Vec<String>>>,
+}
+
+impl Default for StreamBufferState {
+    fn default() -> Self {
+        Self { buffer: Arc::new(Mutex::new(Vec::new())) }
+    }
+}
+
 fn vertex_creds() -> OAuthCredentials {
     OAuthCredentials {
         client_id: VERTEX_CLIENT_ID.to_string(),
@@ -162,6 +172,13 @@ async fn ensure_gca_token(
         state.persist_tokens(app);
     }
     Ok((client, valid_tokens.access_token))
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn poll_stream_chunks(state: State<'_, StreamBufferState>) -> Result<Vec<String>, String> {
+    let mut guard = state.buffer.lock().map_err(|e| format!("lock poisoned: {e}"))?;
+    let chunks: Vec<String> = guard.drain(..).collect();
+    Ok(chunks)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -513,9 +530,12 @@ pub async fn chat_vertex(
         tools: if tools.is_empty() { None } else { Some(tools) },
     };
 
+    if let Ok(mut buf) = app.state::<StreamBufferState>().buffer.lock() { buf.clear(); }
+    let buffer_clone = app.state::<StreamBufferState>().buffer.clone();
     let app_clone = app.clone();
     let on_chunk = move |text: &str| {
         let _ = app_clone.emit("chat-chunk", text);
+        if let Ok(mut buf) = buffer_clone.lock() { buf.push(text.to_string()); }
     };
 
     let start = std::time::Instant::now();
@@ -595,9 +615,12 @@ pub async fn chat_gca(
         tools: if tools.is_empty() { None } else { Some(tools) },
     };
 
+    if let Ok(mut buf) = app.state::<StreamBufferState>().buffer.lock() { buf.clear(); }
+    let buffer_clone = app.state::<StreamBufferState>().buffer.clone();
     let app_clone = app.clone();
     let on_chunk = move |text: &str| {
         let _ = app_clone.emit("chat-chunk", text);
+        if let Ok(mut buf) = buffer_clone.lock() { buf.push(text.to_string()); }
     };
 
     let start = std::time::Instant::now();
@@ -663,9 +686,12 @@ pub async fn chat_mistral(
     };
 
     let client = reqwest::Client::new();
+    if let Ok(mut buf) = app.state::<StreamBufferState>().buffer.lock() { buf.clear(); }
+    let buffer_clone = app.state::<StreamBufferState>().buffer.clone();
     let app_clone = app.clone();
     let on_chunk = move |text: &str| {
         let _ = app_clone.emit("chat-chunk", text);
+        if let Ok(mut buf) = buffer_clone.lock() { buf.push(text.to_string()); }
     };
 
     let start = std::time::Instant::now();

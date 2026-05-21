@@ -25,6 +25,7 @@ pub fn run() {
         .manage(commands::RequestLogState::default())
         .manage(commands::CharacterAssetsState::default())
         .manage(commands::StreamCancelState::default())
+        .manage(commands::StreamBufferState::default())
         .manage(commands_hypa::HypaState::default())
         .setup(|app| {
             let auth_state = app.state::<commands::AuthState>();
@@ -32,6 +33,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::poll_stream_chunks,
             commands::load_preset,
             commands::export_preset,
             commands::load_character,

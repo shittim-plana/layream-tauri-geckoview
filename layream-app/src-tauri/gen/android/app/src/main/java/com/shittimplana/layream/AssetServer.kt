@@ -6,6 +6,8 @@ import java.io.InputStreamReader
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.URLDecoder
+import java.util.concurrent.Executors
 
 class AssetServer(private val context: Context) {
     var port: Int = 0
@@ -14,6 +16,8 @@ class AssetServer(private val context: Context) {
     private var serverSocket: ServerSocket? = null
     @Volatile
     private var running = false
+
+    private val executor = Executors.newFixedThreadPool(4)
 
     fun start(): Int {
         serverSocket = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
@@ -24,7 +28,7 @@ class AssetServer(private val context: Context) {
             while (running) {
                 try {
                     val client = serverSocket?.accept() ?: break
-                    Thread { handleClient(client) }.start()
+                    executor.submit { handleClient(client) }
                 } catch (e: Exception) {
                     if (running) Logger.error("AssetServer accept error: ${e.message}")
                 }
@@ -38,6 +42,7 @@ class AssetServer(private val context: Context) {
     fun stop() {
         running = false
         try { serverSocket?.close() } catch (_: Exception) {}
+        executor.shutdownNow()
     }
 
     private fun handleClient(client: Socket) {
@@ -47,7 +52,7 @@ class AssetServer(private val context: Context) {
             val parts = requestLine.split(" ")
             if (parts.size < 2) return
 
-            var path = parts[1].split("?")[0]
+            var path = URLDecoder.decode(parts[1].split("?")[0], "UTF-8")
             if (path == "/" || path.isEmpty()) path = "/index.html"
             val assetPath = path.removePrefix("/")
 
@@ -67,7 +72,7 @@ class AssetServer(private val context: Context) {
                     "Content-Length: ${data.size}\r\n" +
                     "Cache-Control: no-cache\r\n" +
                     "Access-Control-Allow-Origin: *\r\n" +
-                    "Connection: keep-alive\r\n" +
+                    "Connection: close\r\n" +
                     "\r\n"
 
                 val out = client.getOutputStream()

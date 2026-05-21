@@ -97,13 +97,13 @@ class MainActivity : TauriActivity() {
             },
             "ipc"
           )
+          session.loadUri("http://localhost:$port/")
         },
         { throwable ->
           Logger.error("IPC WebExtension install failed: ${throwable?.message}")
+          session.loadUri("http://localhost:$port/")
         }
       )
-
-    session.loadUri("http://localhost:$port/")
   }
 
   override fun onNewIntent(intent: Intent) {

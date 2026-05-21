@@ -355,7 +355,7 @@ fn evaluate_when_condition(statement: &mut Vec<String>, ctx: &mut CbsContext, de
                 var_val != l
             }
             "tis" => {
-                let toggle_key = format!("toggle_{}", right);
+                let toggle_key = right.to_string();
                 let toggle_val = ctx.toggles.get(&toggle_key)
                     .or_else(|| ctx.global_variables.get(&toggle_key))
                     .cloned()
@@ -364,7 +364,7 @@ fn evaluate_when_condition(statement: &mut Vec<String>, ctx: &mut CbsContext, de
                 toggle_val == l
             }
             "tnotis" | "tisnot" => {
-                let toggle_key = format!("toggle_{}", right);
+                let toggle_key = right.to_string();
                 let toggle_val = ctx.toggles.get(&toggle_key)
                     .or_else(|| ctx.global_variables.get(&toggle_key))
                     .cloned()
@@ -397,7 +397,7 @@ fn evaluate_when_condition(statement: &mut Vec<String>, ctx: &mut CbsContext, de
                 return is_truthy(&var_val);
             }
             "toggle" => {
-                let toggle_key = format!("toggle_{}", right);
+                let toggle_key = right.to_string();
                 let toggle_val = ctx.toggles.get(&toggle_key)
                     .or_else(|| ctx.global_variables.get(&toggle_key))
                     .cloned()

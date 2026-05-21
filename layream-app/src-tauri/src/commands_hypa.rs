@@ -269,7 +269,7 @@ async fn invoke_provider(
                 redirect_uri: LAYREAM_REDIRECT_URI.to_string(),
             };
             let tokens = refresh_token(&client, &creds, state, true, app).await?;
-            gca::generate_non_streaming(&client, &tokens.access_token, model, &request)
+            gca::generate_non_streaming(&client, &tokens.access_token, model, None, &request)
                 .await
                 .map_err(|e| e.to_string())
         }

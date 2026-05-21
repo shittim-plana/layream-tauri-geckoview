@@ -640,7 +640,7 @@ pub async fn chat_gca(
 
     let start = std::time::Instant::now();
     let result = gca::stream_generate(
-        &client, &access_token, &model, &request, on_chunk,
+        &client, &access_token, &model, None, &request, on_chunk,
         Some(cancel),
     ).await;
     let elapsed = start.elapsed().as_millis();
@@ -1342,6 +1342,7 @@ pub async fn generate_user_message(
                 &client,
                 &access_token,
                 &model,
+                None,
                 &request,
             )
             .await
@@ -1406,6 +1407,7 @@ pub fn save_file_to_downloads(
     data: Vec<u8>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
+    if !is_safe_filename(&filename) { return Err(format!("Invalid filename: {}", filename)); }
     use std::path::PathBuf;
     let mut candidates: Vec<PathBuf> = Vec::new();
 

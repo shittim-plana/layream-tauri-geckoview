@@ -30,13 +30,15 @@ pub async fn stream_generate(
     client: &reqwest::Client,
     access_token: &str,
     model: &str,
+    project: Option<&str>,
     request: &GenerateRequest,
     on_chunk: impl Fn(&str),
     cancel: Option<CancelToken>,
 ) -> Result<String, LayreamError> {
     let url = build_stream_endpoint();
     let auth = format!("Bearer {}", access_token);
-    let wrapped = serde_json::json!({ "model": model, "request": request });
+    let mut wrapped = serde_json::json!({ "model": model, "request": request });
+    if let Some(p) = project { wrapped["project"] = serde_json::Value::String(p.to_string()); }
 
     let resp = retry::retry_request(&cancel, || {
         let req = client
@@ -96,10 +98,12 @@ pub async fn generate_non_streaming(
     client: &reqwest::Client,
     access_token: &str,
     model: &str,
+    project: Option<&str>,
     request: &GenerateRequest,
 ) -> Result<String, LayreamError> {
     let url = format!("{}:generateContent", GCA_BASE);
-    let wrapped = serde_json::json!({ "model": model, "request": request });
+    let mut wrapped = serde_json::json!({ "model": model, "request": request });
+    if let Some(p) = project { wrapped["project"] = serde_json::Value::String(p.to_string()); }
 
     let resp = client
         .post(&url)

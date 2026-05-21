@@ -223,7 +223,7 @@
           if (preset.customPromptTemplateToggle) {
             for (const line of preset.customPromptTemplateToggle.split("\n")) {
               const m = line.match(/^(\w+)\s*[:=]\s*(.+)$/);
-              if (m) toggles[`toggle_${m[1]}`] = m[2].trim();
+              if (m) toggles[m[1]] = m[2].trim();
             }
           }
 
@@ -259,7 +259,7 @@
                 if (typeof modToggles === "string" && modToggles.trim()) {
                   for (const line of modToggles.split("\n")) {
                     const m = line.match(/^(\w+)\s*[:=]\s*(.+)$/);
-                    if (m) toggles[`toggle_${m[1]}`] = m[2].trim();
+                    if (m) toggles[m[1]] = m[2].trim();
                   }
                 }
               }

@@ -456,7 +456,18 @@ fn messages_to_chat_messages(messages: &[Value]) -> Vec<mistral::ChatMessage> {
 
 const MAX_LOGS: usize = 200;
 
-fn log_api_call(log_state: &State<'_, RequestLogState>, provider: &str, model: &str, status: &str, duration_ms: u128) {
+fn truncate_str(s: &str, max: usize) -> String {
+    if s.len() <= max { return s.to_string(); }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) { end -= 1; }
+    format!("{}...", &s[..end])
+}
+
+fn log_api_call(
+    log_state: &State<'_, RequestLogState>, provider: &str, model: &str,
+    status: &str, duration_ms: u128,
+    request_preview: &str, response_preview: &str, estimated_tokens: u32,
+) {
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -468,6 +479,9 @@ fn log_api_call(log_state: &State<'_, RequestLogState>, provider: &str, model: &
             "model": model,
             "status": status,
             "duration_ms": duration_ms,
+            "request_preview": request_preview,
+            "response_preview": response_preview,
+            "estimated_tokens": estimated_tokens,
         }));
         if logs.len() > MAX_LOGS {
             let excess = logs.len() - MAX_LOGS;
@@ -545,9 +559,10 @@ pub async fn chat_vertex(
     ).await;
     let elapsed = start.elapsed().as_millis();
 
+    let sp_preview = truncate_str(system_prompt.as_deref().unwrap_or(""), 200);
     match &result {
-        Ok(_) => log_api_call(&log_state, "vertex", &model, "ok", elapsed),
-        Err(e) => log_api_call(&log_state, "vertex", &model, &format!("error: {}", e), elapsed),
+        Ok(text) => log_api_call(&log_state, "vertex", &model, "ok", elapsed, &sp_preview, &truncate_str(text, 500), (text.len() as u32) / 4),
+        Err(e) => log_api_call(&log_state, "vertex", &model, &format!("error: {}", e), elapsed, &sp_preview, "", 0),
     }
 
     result.map_err(|e| e.to_string())
@@ -631,8 +646,8 @@ pub async fn chat_gca(
     let elapsed = start.elapsed().as_millis();
 
     match &result {
-        Ok(_) => log_api_call(&log_state, "gca", &model, "ok", elapsed),
-        Err(e) => log_api_call(&log_state, "gca", &model, &format!("error: {}", e), elapsed),
+        Ok(text) => log_api_call(&log_state, "gca", &model, "ok", elapsed, &truncate_str(system_prompt.as_deref().unwrap_or(""), 200), &truncate_str(text, 500), (text.len() as u32) / 4),
+        Err(e) => log_api_call(&log_state, "gca", &model, &format!("error: {}", e), elapsed, "", "", 0),
     }
 
     result.map_err(|e| e.to_string())
@@ -699,8 +714,8 @@ pub async fn chat_mistral(
     let elapsed = start.elapsed().as_millis();
 
     match &result {
-        Ok(_) => log_api_call(&log_state, "mistral", &model, "ok", elapsed),
-        Err(e) => log_api_call(&log_state, "mistral", &model, &format!("error: {}", e), elapsed),
+        Ok(text) => log_api_call(&log_state, "mistral", &model, "ok", elapsed, &truncate_str(system_prompt.as_deref().unwrap_or(""), 200), &truncate_str(text, 500), (text.len() as u32) / 4),
+        Err(e) => log_api_call(&log_state, "mistral", &model, &format!("error: {}", e), elapsed, "", "", 0),
     }
 
     result.map_err(|e| e.to_string())

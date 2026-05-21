@@ -22,11 +22,8 @@ pub const GCA_MODELS: &[&str] = &[
     "gemini-2.5-flash-lite",
 ];
 
-pub fn build_endpoint(model: &str) -> String {
-    format!(
-        "{}/models/{}:streamGenerateContent?alt=sse",
-        GCA_BASE, model
-    )
+pub fn build_stream_endpoint() -> String {
+    format!("{}:streamGenerateContent?alt=sse", GCA_BASE)
 }
 
 pub async fn stream_generate(
@@ -37,15 +34,16 @@ pub async fn stream_generate(
     on_chunk: impl Fn(&str),
     cancel: Option<CancelToken>,
 ) -> Result<String, LayreamError> {
-    let url = build_endpoint(model);
+    let url = build_stream_endpoint();
     let auth = format!("Bearer {}", access_token);
+    let wrapped = serde_json::json!({ "model": model, "request": request });
 
     let resp = retry::retry_request(&cancel, || {
         let req = client
             .post(&url)
             .header("Authorization", &auth)
             .header("x-goog-api-client", "google-cloud-intellij")
-            .json(request);
+            .json(&wrapped);
         async { req.send().await.map_err(|e| LayreamError::Http(e.to_string())) }
     }).await?;
 
@@ -100,13 +98,14 @@ pub async fn generate_non_streaming(
     model: &str,
     request: &GenerateRequest,
 ) -> Result<String, LayreamError> {
-    let url = format!("{}/models/{}:generateContent", GCA_BASE, model);
+    let url = format!("{}:generateContent", GCA_BASE);
+    let wrapped = serde_json::json!({ "model": model, "request": request });
 
     let resp = client
         .post(&url)
         .header("Authorization", format!("Bearer {}", access_token))
         .header("x-goog-api-client", "google-cloud-intellij")
-        .json(request)
+        .json(&wrapped)
         .send()
         .await
         .map_err(|e| LayreamError::Http(e.to_string()))?;

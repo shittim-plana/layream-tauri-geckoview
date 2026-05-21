@@ -67,7 +67,7 @@ class ApiStreamingService : Service() {
             if (nm.getNotificationChannel(CHANNEL_ID) == null) {
                 val channel = NotificationChannel(
                     CHANNEL_ID,
-                    "API Streaming",
+                    "AI Streaming",
                     NotificationManager.IMPORTANCE_LOW
                 ).apply {
                     description = "AI 응답 스트리밍 동안 프로세스가 종료되지 않도록 유지합니다."
@@ -82,7 +82,7 @@ class ApiStreamingService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Layream")
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)

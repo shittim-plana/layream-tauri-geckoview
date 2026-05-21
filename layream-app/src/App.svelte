@@ -144,7 +144,7 @@
 <div class="header">
   <div style="display: flex; align-items: center; gap: 10px;">
     <h1 style="font-size: 18px; font-weight: 600;">Layream</h1>
-    <span style="font-size: 12px; color: var(--fg3);">v0.3.1</span>
+    <span style="font-size: 12px; color: var(--fg3);">v0.3.2-alpha</span>
   </div>
   <WorkspaceSelector />
 </div>

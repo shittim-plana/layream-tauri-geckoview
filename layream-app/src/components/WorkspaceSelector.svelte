@@ -138,6 +138,10 @@
 
   async function deleteWorkspace(id) {
     try {
+      // Save current session before deleting the active workspace
+      if (activeId === id) {
+        await saveCurrentSession(id);
+      }
       await invoke("cmd_workspace_delete", { id });
       confirmDeleteId = null;
       // If deleting the active workspace, switch to default

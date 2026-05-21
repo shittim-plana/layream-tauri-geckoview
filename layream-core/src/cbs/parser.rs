@@ -266,10 +266,14 @@ fn evaluate_when_block(tag: &str, body: &str, ctx: &mut CbsContext, depth: usize
     let condition_result = evaluate_when_condition(&mut statement, ctx, depth);
 
     if ws_mode == WsMode::Legacy {
+        let (true_body, false_body) = split_else(body);
         if condition_result {
-            return trim_block_lines(&evaluate_depth(body, ctx, depth + 1), WsMode::Legacy);
+            return trim_block_lines(&evaluate_depth(true_body, ctx, depth + 1), WsMode::Legacy);
         }
-        return String::new();
+        return match false_body {
+            Some(fb) => trim_block_lines(&evaluate_depth(fb, ctx, depth + 1), WsMode::Legacy),
+            None => String::new(),
+        };
     }
 
     let (true_body, false_body) = split_else(body);
@@ -289,70 +293,71 @@ fn evaluate_when_condition(statement: &mut Vec<String>, ctx: &mut CbsContext, de
         return false;
     }
 
-    while statement.len() >= 3 {
-        let (Some(right), Some(op), Some(left)) = (statement.pop(), statement.pop(), statement.pop()) else {
-            return false;
-        };
+    let i = 0;
+    while i + 2 < statement.len() {
+        let left = statement[i].clone();
+        let op = statement[i + 1].clone();
+        let right = statement[i + 2].clone();
 
         let op_lower = op.to_lowercase();
         let result = match op_lower.as_str() {
             "and" => {
                 let l = evaluate_depth(&left, ctx, depth + 1);
                 let r = evaluate_depth(&right, ctx, depth + 1);
-                is_truthy(&l) && is_truthy(&r)
+                Some(is_truthy(&l) && is_truthy(&r))
             }
             "or" => {
                 let l = evaluate_depth(&left, ctx, depth + 1);
                 let r = evaluate_depth(&right, ctx, depth + 1);
-                is_truthy(&l) || is_truthy(&r)
+                Some(is_truthy(&l) || is_truthy(&r))
             }
             "is" => {
                 let l = evaluate_depth(&left, ctx, depth + 1);
                 let r = evaluate_depth(&right, ctx, depth + 1);
-                l == r
+                Some(l == r)
             }
             "isnot" => {
                 let l = evaluate_depth(&left, ctx, depth + 1);
                 let r = evaluate_depth(&right, ctx, depth + 1);
-                l != r
+                Some(l != r)
             }
             ">" => {
                 match (evaluate_depth(&left, ctx, depth + 1).parse::<f64>(),
                        evaluate_depth(&right, ctx, depth + 1).parse::<f64>()) {
-                    (Ok(l), Ok(r)) => l > r,
-                    _ => false,
+                    (Ok(l), Ok(r)) => Some(l > r),
+                    _ => Some(false),
                 }
             }
             "<" => {
                 match (evaluate_depth(&left, ctx, depth + 1).parse::<f64>(),
                        evaluate_depth(&right, ctx, depth + 1).parse::<f64>()) {
-                    (Ok(l), Ok(r)) => l < r,
-                    _ => false,
+                    (Ok(l), Ok(r)) => Some(l < r),
+                    _ => Some(false),
                 }
             }
             ">=" => {
                 match (evaluate_depth(&left, ctx, depth + 1).parse::<f64>(),
                        evaluate_depth(&right, ctx, depth + 1).parse::<f64>()) {
-                    (Ok(l), Ok(r)) => l >= r,
-                    _ => false,
+                    (Ok(l), Ok(r)) => Some(l >= r),
+                    _ => Some(false),
                 }
             }
             "<=" => {
                 match (evaluate_depth(&left, ctx, depth + 1).parse::<f64>(),
                        evaluate_depth(&right, ctx, depth + 1).parse::<f64>()) {
-                    (Ok(l), Ok(r)) => l <= r,
-                    _ => false,
+                    (Ok(l), Ok(r)) => Some(l <= r),
+                    _ => Some(false),
                 }
             }
             "vis" => {
                 let var_val = ctx.variables.get(&right).cloned().unwrap_or_default();
                 let l = evaluate_depth(&left, ctx, depth + 1);
-                var_val == l
+                Some(var_val == l)
             }
             "vnotis" | "visnot" => {
                 let var_val = ctx.variables.get(&right).cloned().unwrap_or_default();
                 let l = evaluate_depth(&left, ctx, depth + 1);
-                var_val != l
+                Some(var_val != l)
             }
             "tis" => {
                 let toggle_key = right.to_string();
@@ -361,7 +366,7 @@ fn evaluate_when_condition(statement: &mut Vec<String>, ctx: &mut CbsContext, de
                     .cloned()
                     .unwrap_or_default();
                 let l = evaluate_depth(&left, ctx, depth + 1);
-                toggle_val == l
+                Some(toggle_val == l)
             }
             "tnotis" | "tisnot" => {
                 let toggle_key = right.to_string();
@@ -370,16 +375,21 @@ fn evaluate_when_condition(statement: &mut Vec<String>, ctx: &mut CbsContext, de
                     .cloned()
                     .unwrap_or_default();
                 let l = evaluate_depth(&left, ctx, depth + 1);
-                toggle_val != l
+                Some(toggle_val != l)
             }
-            _ => {
-                statement.push(left);
-                statement.push(op);
+            _ => None,
+        };
+
+        match result {
+            Some(b) => {
+                statement.splice(i..i + 3, std::iter::once(if b { "1".to_string() } else { "0".to_string() }));
+            }
+            None => {
+                // Unknown operator: evaluate remaining as single value
                 let r = evaluate_depth(&right, ctx, depth + 1);
                 return is_truthy(&r);
             }
-        };
-        statement.push(if result { "1".to_string() } else { "0".to_string() });
+        }
     }
 
     if statement.len() == 2 {
@@ -886,7 +896,13 @@ fn to_rpn(tokens: &[Token]) -> Vec<Token> {
             Token::Num(_) => output.push(token.clone()),
             Token::Op(op) => {
                 while let Some(Token::Op(top)) = ops.last() {
-                    if precedence(*top) >= precedence(*op) {
+                    // '^' is right-associative: use strict '>' so equal precedence stays on stack
+                    let dominated = if *op == '^' {
+                        precedence(*top) > precedence(*op)
+                    } else {
+                        precedence(*top) >= precedence(*op)
+                    };
+                    if dominated {
                         if let Some(op) = ops.pop() { output.push(op); }
                     } else {
                         break;
@@ -1111,14 +1127,14 @@ mod tests {
     #[test]
     fn when_toggle() {
         let mut ctx = CbsContext::default();
-        ctx.toggles.insert("toggle_dark".into(), "1".into());
+        ctx.toggles.insert("dark".into(), "1".into());
         assert_eq!(evaluate("{{#when::toggle::dark}}yes{{/when}}", &mut ctx), "yes");
     }
 
     #[test]
     fn when_tis_tnotis() {
         let mut ctx = CbsContext::default();
-        ctx.toggles.insert("toggle_theme".into(), "dark".into());
+        ctx.toggles.insert("theme".into(), "dark".into());
         assert_eq!(evaluate("{{#when::dark::tis::theme}}yes{{/when}}", &mut ctx), "yes");
         assert_eq!(evaluate("{{#when::light::tnotis::theme}}yes{{/when}}", &mut ctx), "yes");
     }

@@ -194,14 +194,14 @@
   // multiple rows do not share a single timer (race when scrolling fast).
   const LONG_PRESS_MS = 600;
   const pressTimers = new Map();
-  let longPressFired = false;
+  let longPressFiredId = null;
 
   function startPress(kindId, item) {
-    longPressFired = false;
+    longPressFiredId = null;
     const key = `${kindId}:${item.id}`;
     clearTimeout(pressTimers.get(key));
     const t = setTimeout(() => {
-      longPressFired = true;
+      longPressFiredId = key;
       askDelete(kindId, item.id, item.name);
     }, LONG_PRESS_MS);
     pressTimers.set(key, t);
@@ -214,10 +214,11 @@
   }
 
   function clickRow(kindId, item) {
-    if (longPressFired) {
+    const key = `${kindId}:${item.id}`;
+    if (longPressFiredId === key) {
       // The long-press already triggered the confirm dialog. Suppress the
       // click that fires on touchend so we don't load + delete in one gesture.
-      longPressFired = false;
+      longPressFiredId = null;
       return;
     }
     loadItem(kindId, item.id);

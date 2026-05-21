@@ -242,6 +242,9 @@ pub async fn generate_non_streaming(
                 .and_then(|p| p.as_array())
             {
                 for part in parts {
+                    if part.get("thought") == Some(&serde_json::Value::Bool(true)) {
+                        continue;
+                    }
                     if let Some(t) = part.get("text").and_then(|t| t.as_str()) {
                         text.push_str(t);
                     }

@@ -1,6 +1,5 @@
 <script>
   import { invoke } from "../lib/tauri.js";
-  import { onMount } from "svelte";
 
   let { value = "", onchange, readonly = false } = $props();
 
@@ -86,7 +85,7 @@
     window.addEventListener("mouseup", onEnd);
   }
 
-  onMount(() => {
+  $effect(() => {
     updateHighlight(value);
   });
 </script>

@@ -134,6 +134,9 @@ pub async fn generate_non_streaming(
                 .and_then(|p| p.as_array())
             {
                 for part in parts {
+                    if part.get("thought") == Some(&serde_json::Value::Bool(true)) {
+                        continue;
+                    }
                     if let Some(t) = part.get("text").and_then(|t| t.as_str()) {
                         text.push_str(t);
                     }
@@ -226,10 +229,10 @@ mod tests {
 
     #[test]
     fn gca_endpoint_format() {
-        let url = build_endpoint("gemini-2.5-flash");
+        let url = build_stream_endpoint();
         assert_eq!(
             url,
-            "https://cloudcode-pa.googleapis.com/v1internal/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+            "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
         );
     }
 

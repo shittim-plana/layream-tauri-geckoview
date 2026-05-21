@@ -154,10 +154,15 @@
     // Layream's stored convention — see msgs.map below mapping char→model).
     // Saved sessions are loaded in onMount before any send, so messages.length === 0
     // here implies a genuinely fresh chat, not a race with session restore.
-    if (messages.length === 0) {
+    // Load character once — reused for first_mes, prompt assembly, and module lorebook.
+    let loadedCharacter = null;
+    try {
+      loadedCharacter = await invoke("cmd_load_current_character");
+    } catch (e) { console.error("cmd_load_current_character failed:", e); }
+
+    if (messages.length === 0 && loadedCharacter) {
       try {
-        const ch = await invoke("cmd_load_current_character");
-        const card = ch?.card?.data || ch?.card || {};
+        const card = loadedCharacter?.card?.data || loadedCharacter?.card || {};
         const firstMes = card.first_mes || "";
         const altGreetings = card.alternate_greetings || card.alternateGreetings || [];
         const allGreetings = [firstMes, ...altGreetings].filter(g => g && g.trim());
@@ -204,9 +209,8 @@
           let characterDesc = "";
           let characterPersona = "";
           let lorebook = [];
-          try {
-            const ch = await invoke("cmd_load_current_character");
-            const card = ch?.card?.data || ch?.card || {};
+          {
+            const card = loadedCharacter?.card?.data || loadedCharacter?.card || {};
             charName = card.name || "Character";
             characterDesc = card.description || "";
             characterPersona = card.personality || "";
@@ -216,7 +220,7 @@
             } else if (card.character_book?.entries) {
               lorebook = Object.values(card.character_book.entries).filter(e => e.enabled !== false);
             }
-          } catch (_) {}
+          }
 
           const regexList = [...(preset.regex || [])];
           const toggles = {};
@@ -226,12 +230,17 @@
               if (m) toggles[m[1]] = m[2].trim();
             }
           }
+          if (preset.templateDefaultVariables) {
+            for (const line of preset.templateDefaultVariables.split("\n")) {
+              const m = line.match(/^(\w+)\s*[:=]\s*(.+)$/);
+              if (m) toggles[m[1]] = m[2].trim();
+            }
+          }
 
           // Merge module lorebook entries into character lorebook
           try {
-            const ch = await invoke("cmd_load_current_character");
-            if (ch?.moduleData) {
-              const modData = typeof ch.moduleData === "string" ? JSON.parse(ch.moduleData) : ch.moduleData;
+            if (loadedCharacter?.moduleData) {
+              const modData = typeof loadedCharacter.moduleData === "string" ? JSON.parse(loadedCharacter.moduleData) : loadedCharacter.moduleData;
               const modLorebook = modData?.lorebook || modData?.data?.lorebook || [];
               const active = (Array.isArray(modLorebook) ? modLorebook : []).filter(e => !e.disable);
               lorebook = [...lorebook, ...active];

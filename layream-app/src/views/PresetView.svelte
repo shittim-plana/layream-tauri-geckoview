@@ -127,8 +127,21 @@
   async function updatePreview() {
     if (!preset?.promptTemplate?.[editingIndex]) return;
     const text = getItemText(preset.promptTemplate[editingIndex]);
+    const toggles = {};
+    if (preset.customPromptTemplateToggle) {
+      for (const line of preset.customPromptTemplateToggle.split("\n")) {
+        const m = line.match(/^(\w+)\s*[:=]\s*(.+)$/);
+        if (m) toggles[m[1]] = m[2].trim();
+      }
+    }
+    if (preset.templateDefaultVariables) {
+      for (const line of preset.templateDefaultVariables.split("\n")) {
+        const m = line.match(/^(\w+)\s*[:=]\s*(.+)$/);
+        if (m) toggles[m[1]] = m[2].trim();
+      }
+    }
     try {
-      previewText = await invoke("evaluate_cbs", { input: text, char_name: charName, user_name: userName });
+      previewText = await invoke("evaluate_cbs", { input: text, char_name: charName, user_name: userName, toggles });
     } catch (e) {
       previewText = `Error: ${e}`;
     }

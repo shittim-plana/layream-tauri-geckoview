@@ -27,7 +27,9 @@ pub fn save_tokens(data_dir: &Path, vertex: &Option<Tokens>, gca: &Option<Tokens
     let encrypted = crypto::encrypt(json.as_bytes(), ENCRYPTION_KEY).map_err(|e| format!("{:?}", e))?;
 
     let path = data_dir.join(TOKEN_FILE);
-    fs::write(&path, &encrypted).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, &encrypted).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -50,7 +52,9 @@ pub fn save_settings(data_dir: &Path, settings: &Value) -> Result<(), String> {
 
     let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
     let path = data_dir.join(SETTINGS_FILE);
-    fs::write(&path, json.as_bytes()).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, json.as_bytes()).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -96,7 +100,10 @@ const PRESET_FILE: &str = "current_preset.json";
 pub fn save_current_preset(data_dir: &Path, preset: &Value) -> Result<(), String> {
     fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(preset).map_err(|e| e.to_string())?;
-    fs::write(data_dir.join(PRESET_FILE), json.as_bytes()).map_err(|e| e.to_string())?;
+    let path = data_dir.join(PRESET_FILE);
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, json.as_bytes()).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -114,7 +121,10 @@ const SESSION_FILE: &str = "session.json";
 pub fn save_session(data_dir: &Path, session: &Value) -> Result<(), String> {
     fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(session).map_err(|e| e.to_string())?;
-    fs::write(data_dir.join(SESSION_FILE), json.as_bytes()).map_err(|e| e.to_string())?;
+    let path = data_dir.join(SESSION_FILE);
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, json.as_bytes()).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -132,7 +142,10 @@ const CHARACTER_FILE: &str = "current_character.json";
 pub fn save_current_character(data_dir: &Path, character: &Value) -> Result<(), String> {
     fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(character).map_err(|e| e.to_string())?;
-    fs::write(data_dir.join(CHARACTER_FILE), json.as_bytes()).map_err(|e| e.to_string())?;
+    let path = data_dir.join(CHARACTER_FILE);
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, json.as_bytes()).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
     Ok(())
 }
 

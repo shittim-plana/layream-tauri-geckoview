@@ -3,6 +3,7 @@
   import { onMount, onDestroy } from "svelte";
   import { toUserError } from "../lib/errors.js";
   import HypaModal from "../components/HypaModal.svelte";
+  import ResizableTextarea from "../components/ResizableTextarea.svelte";
   import { getWorkspaceVersion } from "../lib/appStore.svelte.js";
 
   let { onReady } = $props();
@@ -387,7 +388,7 @@
 
       <div class="field">
         <label class="label">Summary Prompt</label>
-        <textarea class="textarea" rows="3" bind:value={hypaSummaryPrompt}></textarea>
+        <ResizableTextarea bind:value={hypaSummaryPrompt} />
       </div>
 
       <div class="field">

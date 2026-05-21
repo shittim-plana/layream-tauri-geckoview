@@ -15,6 +15,7 @@
   --radius: 12px;
   --radius-sm: 8px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --nav-height: 52px;   /* nav-item content (8+22+3+13+6=52) + border is accounted separately */
 
   /* prompt template type badge colors */
   --type-plain: #3b82f6;
@@ -78,7 +79,7 @@ body {
   flex-direction: column;
   min-height: 100vh;
   min-height: 100dvh;
-  padding-bottom: calc(64px + var(--safe-bottom));
+  padding-bottom: calc(var(--nav-height) + 1px + var(--safe-bottom));
 }
 
 /* --- Header --- */
@@ -480,6 +481,9 @@ button {
   line-height: 1.5;
   white-space: pre-wrap;
   word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  overflow: hidden;
 }
 
 .message.user .message-bubble {

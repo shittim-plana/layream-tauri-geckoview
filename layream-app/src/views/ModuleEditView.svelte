@@ -1,6 +1,7 @@
 <script>
   import { invoke } from "../lib/tauri.js";
   import { toUserError } from "../lib/errors.js";
+  import ResizableTextarea from "../components/ResizableTextarea.svelte";
 
   let { moduleId = "", moduleName = "", onBack = () => {} } = $props();
 
@@ -242,7 +243,7 @@
         </div>
         <div class="field">
           <label class="label">설명</label>
-          <textarea class="textarea" bind:value={description} placeholder="모듈 설명" style="min-height: 60px;"></textarea>
+          <ResizableTextarea bind:value={description} placeholder="모듈 설명" minHeight={60} />
         </div>
       </div>
     </div>
@@ -295,7 +296,7 @@
                   </div>
                   <div class="field">
                     <label class="label">내용</label>
-                    <textarea class="textarea" bind:value={entry.content} placeholder="로어북 내용" style="min-height: 80px;"></textarea>
+                    <ResizableTextarea bind:value={entry.content} placeholder="로어북 내용" minHeight={80} />
                   </div>
                   <div class="field">
                     <label class="label">코멘트</label>
@@ -390,11 +391,11 @@
                   </div>
                   <div class="field">
                     <label class="label">패턴 (IN)</label>
-                    <textarea class="textarea" bind:value={entry.in} placeholder="정규식 패턴" style="min-height: 60px; font-family: monospace;"></textarea>
+                    <ResizableTextarea bind:value={entry.in} placeholder="정규식 패턴" minHeight={60} style="font-family: monospace;" />
                   </div>
                   <div class="field">
                     <label class="label">치환 (OUT)</label>
-                    <textarea class="textarea" bind:value={entry.out} placeholder="치환 문자열" style="min-height: 60px; font-family: monospace;"></textarea>
+                    <ResizableTextarea bind:value={entry.out} placeholder="치환 문자열" minHeight={60} style="font-family: monospace;" />
                   </div>
                   <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;">
                     <div class="field" style="flex: 1; min-width: 120px; margin-bottom: 0;">

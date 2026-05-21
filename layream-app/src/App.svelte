@@ -11,6 +11,7 @@
   import TestView from "./views/TestView.svelte";
   import SettingsView from "./views/SettingsView.svelte";
   import WorkspaceSelector from "./components/WorkspaceSelector.svelte";
+  import { APP_VERSION } from "./lib/version.js";
 
   // Event name for broadcasting flush-on-close to all views.
   // Views (ChatView, HypaView, etc.) listen for this and persist pending state.
@@ -152,7 +153,7 @@
 <div class="header">
   <div style="display: flex; align-items: center; gap: 10px;">
     <h1 style="font-size: 18px; font-weight: 600;">Layream</h1>
-    <span style="font-size: 12px; color: var(--fg3);">v0.3.5-alpha</span>
+    <span style="font-size: 12px; color: var(--fg3);">v{APP_VERSION}</span>
   </div>
   <WorkspaceSelector />
 </div>

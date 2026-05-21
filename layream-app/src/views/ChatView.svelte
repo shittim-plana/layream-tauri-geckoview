@@ -3,6 +3,7 @@
   import { onMount, onDestroy } from "svelte";
   import { toUserError, ErrorKind } from "../lib/errors.js";
   import { renderMarkdown } from "../lib/markdownRenderer.js";
+  import ResizableTextarea from "../components/ResizableTextarea.svelte";
   import {
     MAIN_BRANCH_ID, appendMessage, getVisibleMessages,
     countForks, getBranchesAtForkPoint, createForkBranch,
@@ -38,6 +39,8 @@
   let activeToggles = $state({});
   let toggleDefs = $state([]);
   let togglePanelOpen = $state(false);
+  let charAvatarUrl = $state("");
+  let charName = $state("");
   const ERROR_CLEAR_MS = 3000;
 
   function flashError(rawOrMsg, contextHint) {
@@ -46,6 +49,32 @@
     error = message;
     setTimeout(() => { if (error === message) error = ""; }, ERROR_CLEAR_MS);
     console.error(`[ChatView] ${kind}:`, rawOrMsg);
+  }
+
+  const IMG_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
+  function avatarMimeType(name) {
+    const ext = name.split(".").pop()?.toLowerCase();
+    if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+    if (ext === "gif") return "image/gif";
+    if (ext === "webp") return "image/webp";
+    return "image/png";
+  }
+
+  async function loadCharAvatar() {
+    charAvatarUrl = "";
+    charName = "";
+    try {
+      const char = await invoke("cmd_load_current_character");
+      if (!char) return;
+      const card = char.card;
+      charName = card?.data?.name || char.characterName || "";
+      const assetList = char.assetList || [];
+      const imgAsset = assetList.find(a => IMG_EXTS.some(ext => a.name.toLowerCase().endsWith(ext)));
+      if (imgAsset) {
+        const b64 = await invoke("get_asset_data", { asset_name: imgAsset.name });
+        if (b64) charAvatarUrl = `data:${avatarMimeType(imgAsset.name)};base64,${b64}`;
+      }
+    } catch (_) { /* no avatar available — fallback to initial */ }
   }
 
   let visibleMessages = $derived(getVisibleMessages(messages, branches, activeBranchId));
@@ -79,6 +108,7 @@
     }
     sessionLoaded = true;
     loadProviderLabel();
+    loadCharAvatar();
     onReady?.({ sendChatMessage, getMessages: () => visibleMessages });
   });
 
@@ -141,6 +171,7 @@
       error = "";
       streamingText = "";
       loadProviderLabel();
+      loadCharAvatar();
     })();
   });
 
@@ -149,6 +180,20 @@
     let loadedCharacter = null;
     try { loadedCharacter = await invoke("cmd_load_current_character"); }
     catch (e) { console.error("cmd_load_current_character failed:", e); }
+
+    // Update avatar from loaded character if not yet loaded
+    if (loadedCharacter && !charAvatarUrl) {
+      charName = loadedCharacter.card?.data?.name || loadedCharacter.characterName || "";
+      const assetList = loadedCharacter.assetList || [];
+      const imgAsset = assetList.find(a => IMG_EXTS.some(ext => a.name.toLowerCase().endsWith(ext)));
+      if (imgAsset) {
+        invoke("get_asset_data", { asset_name: imgAsset.name }).then(b64 => {
+          if (b64) charAvatarUrl = `data:${avatarMimeType(imgAsset.name)};base64,${b64}`;
+        }).catch(() => {});
+      }
+    } else if (loadedCharacter) {
+      charName = loadedCharacter.card?.data?.name || loadedCharacter.characterName || "";
+    }
 
     if (messages.length === 0 && loadedCharacter) {
       const allGreetings = extractGreetings(loadedCharacter);
@@ -286,6 +331,20 @@
     catch (e) { console.warn("loadProviderLabel:", e); chatProvider = ""; }
   }
 
+  async function pinMessage(msg) {
+    const wasPinned = !!msg.pinned;
+    // Optimistic UI toggle
+    messages = messages.map(m => m.chatId === msg.chatId ? { ...m, pinned: !wasPinned } : m);
+    try {
+      await invoke("hypa_pin_message", { chat_id: msg.chatId, is_pinned: !wasPinned });
+    } catch (e) {
+      // Revert on failure
+      messages = messages.map(m => m.chatId === msg.chatId ? { ...m, pinned: wasPinned } : m);
+      console.error("hypa_pin_message failed:", e);
+      flashError(e, "핀 설정");
+    }
+  }
+
   function altCount(msg) { return msg.alternatives?.length ? (msg._allResponses?.length ?? (msg.alternatives.length + 1)) : 0; }
   function forkFromMessage(chatId) { const r = createForkBranch(branches, chatId, `분기 ${branches.length}`); branches = r.branches; activeBranchId = r.newBranch.id; forkDropdownId = null; }
   function switchBranch(branchId) { activeBranchId = branchId; forkDropdownId = null; }
@@ -331,7 +390,7 @@
     {#each visibleMessages as msg, i}
       {@const forkCount = countForks(branches, msg.chatId)}
       {@const branchesHere = getBranchesAtForkPoint(branches, msg.chatId)}
-      <div class="message {msg.role}">
+      <div class="message {msg.role}" class:pinned={msg.pinned}>
         {#if msg.role !== "error"}
           <div class="msg-actions">
             <button class="msg-action-btn msg-fork-btn" onclick={(e) => { e.stopPropagation(); forkFromMessage(msg.chatId); }} disabled={streaming} title="포크 (분기 생성)" aria-label="이 메시지에서 분기">
@@ -340,6 +399,11 @@
               </svg>
             </button>
             {#if msg.role === "char"}
+              <button class="msg-action-btn msg-pin-btn" class:pinned={msg.pinned} onclick={() => pinMessage(msg)} disabled={streaming} title={msg.pinned ? "핀 해제" : "핀"} aria-label={msg.pinned ? "핀 해제" : "핀 고정"}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill={msg.pinned ? "currentColor" : "none"} stroke="currentColor" stroke-width="2">
+                  <path d="M12 2L8.5 8.5 2 9.5l4.5 5L5.5 22 12 18.5 18.5 22l-1-7.5 4.5-5-6.5-1z" />
+                </svg>
+              </button>
               <button class="msg-action-btn msg-regen-btn" onclick={() => regenerateFrom(msg)} disabled={streaming} title="여기서 재생성" aria-label="이 응답부터 재생성">↻</button>
             {/if}
             <button class="msg-action-btn" onclick={() => startEdit(msg)} disabled={streaming || editingMsgId !== null} title="편집" aria-label="메시지 편집">✏</button>
@@ -348,7 +412,7 @@
         {/if}
         {#if msg.chatId === editingMsgId}
           <div class="edit-area">
-            <textarea class="edit-textarea" bind:value={editingText} rows="3"></textarea>
+            <ResizableTextarea className="edit-textarea" bind:value={editingText} minHeight={120} />
             <div class="edit-buttons">
               <button class="btn btn-sm btn-primary edit-save-btn" onclick={() => saveEdit(msg)}>저장</button>
               <button class="btn btn-sm btn-secondary edit-cancel-btn" onclick={cancelEdit}>취소</button>
@@ -365,14 +429,36 @@
             <button class="btn btn-sm btn-danger error-retry-btn" onclick={regenerateResponse} disabled={streaming}>다시 시도</button>
           </div>
         {:else if msg.role === "char"}
-          <div class="message-bubble">{@html renderMarkdown(msg.text)}</div>
+          <div class="msg-content-row">
+            <div class="msg-avatar char-avatar" aria-hidden="true">
+              {#if charAvatarUrl}
+                <img src={charAvatarUrl} alt="" class="avatar-img" />
+              {:else}
+                <span class="avatar-initial">{charName ? charName[0].toUpperCase() : "C"}</span>
+              {/if}
+            </div>
+            <div class="message-bubble">{@html renderMarkdown(msg.text)}</div>
+          </div>
         {:else}
-          <div class="message-bubble">{msg.text}</div>
+          <div class="msg-content-row user-row">
+            <div class="message-bubble">{msg.text}</div>
+            <div class="msg-avatar user-avatar" aria-hidden="true">
+              <span class="avatar-initial">U</span>
+            </div>
+          </div>
         {/if}
 
         {#if msg.role !== "error"}
           <span class="message-time">
             {msg.time}
+            {#if msg.pinned}
+              <span class="pin-badge">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5">
+                  <path d="M12 2L8.5 8.5 2 9.5l4.5 5L5.5 22 12 18.5 18.5 22l-1-7.5 4.5-5-6.5-1z" />
+                </svg>
+                핀
+              </span>
+            {/if}
             {#if msg.role === "char" && altCount(msg) > 0}
               <span class="alt-badge">{altCount(msg)}</span>
             {/if}
@@ -422,8 +508,17 @@
 
     {#if streaming}
       <div class="message char">
-        <div class="message-bubble">
-          {#if streamingText}{@html renderMarkdown(streamingText)}{:else}<div class="spinner" style="margin: 4px auto;"></div>{/if}
+        <div class="msg-content-row">
+          <div class="msg-avatar char-avatar" aria-hidden="true">
+            {#if charAvatarUrl}
+              <img src={charAvatarUrl} alt="" class="avatar-img" />
+            {:else}
+              <span class="avatar-initial">{charName ? charName[0].toUpperCase() : "C"}</span>
+            {/if}
+          </div>
+          <div class="message-bubble">
+            {#if streamingText}{@html renderMarkdown(streamingText)}{:else}<div class="spinner" style="margin: 4px auto;"></div>{/if}
+          </div>
         </div>
       </div>
     {/if}
@@ -431,30 +526,29 @@
     <div bind:this={chatBottom} aria-hidden="true"></div>
   </div>
 
-  {#if toggleDefs.length > 0}
-    <div class="toggle-panel-wrapper">
-      <button class="toggle-panel-trigger" onclick={() => { togglePanelOpen = !togglePanelOpen; }} aria-expanded={togglePanelOpen} aria-label="프롬프트 토글 패널 열기/닫기">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" /></svg>
-        토글 ({Object.values(activeToggles).filter(Boolean).length}/{toggleDefs.length})
-        <svg class="toggle-panel-chevron" class:open={togglePanelOpen} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6" /></svg>
-      </button>
-      {#if togglePanelOpen}
-        <div class="toggle-panel">
-          {#each toggleDefs as def (def.key)}
-            <label class="toggle-panel-item">
-              <span class="toggle-panel-label">{def.label}</span>
-              <span class="toggle">
-                <input type="checkbox" checked={activeToggles[def.key] !== false} onchange={(e) => { activeToggles[def.key] = e.target.checked; activeToggles = {...activeToggles}; }} />
-                <span class="toggle-track"></span>
-              </span>
-            </label>
-          {/each}
-        </div>
-      {/if}
-    </div>
-  {/if}
-
   <div class="chat-input-bar">
+    {#if toggleDefs.length > 0}
+      <div class="toggle-panel-wrapper">
+        <button class="toggle-panel-trigger" onclick={() => { togglePanelOpen = !togglePanelOpen; }} aria-expanded={togglePanelOpen} aria-label="프롬프트 토글 패널 열기/닫기">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" /></svg>
+          토글 ({Object.values(activeToggles).filter(Boolean).length}/{toggleDefs.length})
+          <svg class="toggle-panel-chevron" class:open={togglePanelOpen} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6" /></svg>
+        </button>
+        {#if togglePanelOpen}
+          <div class="toggle-panel">
+            {#each toggleDefs as def (def.key)}
+              <label class="toggle-panel-item">
+                <span class="toggle-panel-label">{def.label}</span>
+                <span class="toggle">
+                  <input type="checkbox" checked={activeToggles[def.key] !== false} onchange={(e) => { activeToggles[def.key] = e.target.checked; activeToggles = {...activeToggles}; }} />
+                  <span class="toggle-track"></span>
+                </span>
+              </label>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
     <div class="input-meta-row">
       {#if chatProvider}<span class="provider-badge">{chatProvider}</span>{/if}
       {#if branches.length > 1}<span class="branch-badge">{branches.find(b => b.id === activeBranchId)?.name || activeBranchId}</span>{/if}

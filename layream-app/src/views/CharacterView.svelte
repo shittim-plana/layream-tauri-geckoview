@@ -3,6 +3,7 @@
   import { invoke } from "../lib/tauri.js";
   import { toUserError } from "../lib/errors.js";
   import FileImport from "../components/FileImport.svelte";
+  import ResizableTextarea from "../components/ResizableTextarea.svelte";
   import { getWorkspaceVersion } from "../lib/appStore.svelte.js";
 
   let character = $state(null);
@@ -293,7 +294,7 @@
         <div class="card-header"><span class="card-title">설명 (Description)</span></div>
         <div class="card-body">
           {#if editMode}
-            <textarea class="textarea" rows="5" bind:value={data.description} placeholder="캐릭터 설명"></textarea>
+            <ResizableTextarea bind:value={data.description} placeholder="캐릭터 설명" />
           {:else}
             {#if data.description}
               <pre style="font-size: 13px; color: var(--fg2); white-space: pre-wrap; word-wrap: break-word; font-family: inherit; line-height: 1.6;">{data.description}</pre>
@@ -309,7 +310,7 @@
         <div class="card-header"><span class="card-title">성격 (Personality)</span></div>
         <div class="card-body">
           {#if editMode}
-            <textarea class="textarea" rows="3" bind:value={data.personality} placeholder="캐릭터 성격"></textarea>
+            <ResizableTextarea bind:value={data.personality} placeholder="캐릭터 성격" />
           {:else}
             {#if data.personality}
               <pre style="font-size: 13px; color: var(--fg2); white-space: pre-wrap; word-wrap: break-word; font-family: inherit; line-height: 1.6;">{data.personality}</pre>
@@ -325,7 +326,7 @@
         <div class="card-header"><span class="card-title">시나리오 (Scenario)</span></div>
         <div class="card-body">
           {#if editMode}
-            <textarea class="textarea" rows="3" bind:value={data.scenario} placeholder="시나리오"></textarea>
+            <ResizableTextarea bind:value={data.scenario} placeholder="시나리오" />
           {:else}
             {#if data.scenario}
               <pre style="font-size: 13px; color: var(--fg2); white-space: pre-wrap; word-wrap: break-word; font-family: inherit; line-height: 1.6;">{data.scenario}</pre>
@@ -383,13 +384,11 @@
           </div>
           <div class="card-body">
             {#if editMode}
-              <textarea
-                class="textarea"
-                rows="4"
+              <ResizableTextarea
                 value={getGreeting(data, safeIdx)}
                 oninput={(e) => setGreeting(data, safeIdx, e.target.value)}
                 placeholder={safeIdx < 0 ? "첫 메시지" : "대체 인사"}
-              ></textarea>
+              />
             {:else}
               {@const text = getGreeting(data, safeIdx)}
               {#if text}
@@ -408,7 +407,7 @@
           <div class="card-header"><span class="card-title">메시지 예시 (Message Examples)</span></div>
           <div class="card-body">
             {#if editMode}
-              <textarea class="textarea" rows="4" bind:value={data.mes_example} placeholder="메시지 예시"></textarea>
+              <ResizableTextarea bind:value={data.mes_example} placeholder="메시지 예시" />
             {:else}
               <pre style="font-size: 13px; color: var(--fg2); white-space: pre-wrap; word-wrap: break-word; font-family: inherit; line-height: 1.6;">{data.mes_example}</pre>
             {/if}
@@ -421,7 +420,7 @@
         <div class="card-header"><span class="card-title">시스템 프롬프트 (System Prompt)</span></div>
         <div class="card-body">
           {#if editMode}
-            <textarea class="textarea" rows="3" bind:value={data.system_prompt} placeholder="시스템 프롬프트"></textarea>
+            <ResizableTextarea bind:value={data.system_prompt} placeholder="시스템 프롬프트" />
           {:else}
             {#if data.system_prompt}
               <pre style="font-size: 13px; color: var(--fg2); white-space: pre-wrap; word-wrap: break-word; font-family: inherit; line-height: 1.6;">{data.system_prompt}</pre>
@@ -438,7 +437,7 @@
           <div class="card-header"><span class="card-title">후속 지시 (Post History Instructions)</span></div>
           <div class="card-body">
             {#if editMode}
-              <textarea class="textarea" rows="3" bind:value={data.post_history_instructions} placeholder="후속 지시"></textarea>
+              <ResizableTextarea bind:value={data.post_history_instructions} placeholder="후속 지시" />
             {:else}
               <pre style="font-size: 13px; color: var(--fg2); white-space: pre-wrap; word-wrap: break-word; font-family: inherit; line-height: 1.6;">{data.post_history_instructions}</pre>
             {/if}
@@ -451,7 +450,7 @@
         <div class="card-header"><span class="card-title">제작자 노트 (Creator Notes)</span></div>
         <div class="card-body">
           {#if editMode}
-            <textarea class="textarea" rows="3" bind:value={data.creator_notes} placeholder="제작자 노트"></textarea>
+            <ResizableTextarea bind:value={data.creator_notes} placeholder="제작자 노트" />
           {:else}
             {#if data.creator_notes}
               <pre style="font-size: 13px; color: var(--fg2); white-space: pre-wrap; word-wrap: break-word; font-family: inherit; line-height: 1.6;">{data.creator_notes}</pre>
@@ -552,7 +551,7 @@
                 </div>
                 <div class="field">
                   <label class="label">Content</label>
-                  <textarea class="textarea" rows="3" bind:value={entry.content}></textarea>
+                  <ResizableTextarea bind:value={entry.content} />
                 </div>
               </div>
             {/each}

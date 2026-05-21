@@ -1,6 +1,13 @@
 <script>
   import { invoke } from "../lib/tauri.js";
   import { onMount, onDestroy } from "svelte";
+  import {
+    loadSettings as storeLoadSettings,
+    saveSettings as storeSaveSettings,
+    getSettings as storeGetSettings,
+    getWorkspaceVersion,
+  } from "../lib/appStore.svelte.js";
+  import { createAutosave } from "../lib/autosave.js";
 
   let debugLines = $state([]);
   let debugLog = $derived(debugLines.join("\n"));
@@ -330,13 +337,17 @@
 
   async function loadGcaProfile() {
     try {
-      const projectId = await invoke("gca_load_code_assist");
-      if (projectId) {
-        gcaServiceTier = `Project: ${projectId}`;
-        gcaProject = projectId;
+      const [projectResult, optOutResult] = await Promise.allSettled([
+        invoke("gca_load_code_assist"),
+        invoke("gca_check_opt_out"),
+      ]);
+      if (projectResult.status === "fulfilled" && projectResult.value) {
+        gcaServiceTier = `Project: ${projectResult.value}`;
+        gcaProject = projectResult.value;
       }
-      const optOut = await invoke("gca_check_opt_out");
-      gcaOptOut = optOut;
+      if (optOutResult.status === "fulfilled") {
+        gcaOptOut = optOutResult.value;
+      }
     } catch (e) { console.error("GCA profile load failed:", e); dbg(`GCA profile error: ${e}`); }
   }
 
@@ -416,16 +427,16 @@
   }
 
   // --- Persistence ---
-  let saveTimeout;
+  const settingsAutosave = createAutosave(async () => {
+    try {
+      const existing = storeGetSettings() || await invoke("cmd_load_settings") || {};
+      const merged = { ...existing, ...collectSettings() };
+      await storeSaveSettings(invoke, merged);
+    } catch (e) { console.error("Failed to save settings:", e); dbg(`Settings save error: ${e}`); }
+  }, { delayMs: 500 });
+
   function scheduleSettingsSave() {
-    clearTimeout(saveTimeout);
-    saveTimeout = setTimeout(async () => {
-      try {
-        const existing = await invoke("cmd_load_settings") || {};
-        const merged = { ...existing, ...collectSettings() };
-        await invoke("cmd_save_settings", { settings: merged });
-      } catch (e) { console.error("Failed to save settings:", e); dbg(`Settings save error: ${e}`); }
-    }, 500);
+    settingsAutosave.schedule();
   }
 
   function collectSettings() {
@@ -462,15 +473,26 @@
 
   onMount(async () => {
     try {
-      const saved = await invoke("cmd_load_settings");
+      const saved = await storeLoadSettings(invoke);
       applySettings(saved);
     } catch (e) { console.error("Failed to load settings:", e); dbg(`Settings load error: ${e}`); }
-    checkVertexStatus();
-    await checkGcaStatus();
+    await Promise.all([checkVertexStatus(), checkGcaStatus()]);
     if (gcaStatus?.connected && !gcaStatus?.expired) {
       loadGcaProfile();
     }
     listenAuthEvents();
+  });
+
+  // Re-load settings when workspace switches
+  $effect(() => {
+    const wsVersion = getWorkspaceVersion();
+    if (wsVersion === 0) return;
+    (async () => {
+      try {
+        const saved = await storeLoadSettings(invoke);
+        applySettings(saved);
+      } catch (e) { console.error("Failed to reload settings after workspace switch:", e); }
+    })();
   });
 
   function statusText(status) {

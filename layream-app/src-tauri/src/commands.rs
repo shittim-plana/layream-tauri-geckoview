@@ -17,6 +17,7 @@ use layream_core::retry;
 
 const GCA_REDIRECT_URI: &str = "com.googleusercontent.apps.681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j:/oauth2callback";
 use layream_core::voyage;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager, State};
@@ -24,6 +25,112 @@ use tauri::{Emitter, Manager, State};
 use std::collections::HashMap;
 
 use crate::persistence;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Typed structs for Tauri command parameters.
+// These replace bare `serde_json::Value` at the command boundary to provide
+// compile-time type safety, IDE support, and implicit documentation.
+//
+// All structs use `#[serde(default)]` on fields for backward compatibility
+// with previously saved JSON, and `#[serde(flatten)] extra` to preserve
+// unknown fields round-tripped through persistence.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// A single chat message sent from the frontend to the chat API commands.
+/// The frontend maps "char" → "model" before sending, so `role` is one of
+/// "user" | "model" | "system".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatApiMessage {
+    pub role: String,
+    pub text: String,
+}
+
+/// Session data persisted between app restarts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionData {
+    #[serde(default)]
+    pub messages: Vec<Value>,
+    #[serde(default)]
+    pub active_toggles: Option<HashMap<String, bool>>,
+    #[serde(default)]
+    pub branches: Option<Vec<Value>>,
+    #[serde(default)]
+    pub active_branch_id: Option<String>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+/// Application settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSettings {
+    #[serde(default)]
+    pub user_name: Option<String>,
+    #[serde(default)]
+    pub chat_provider: Option<String>,
+    #[serde(default)]
+    pub summary_provider: Option<String>,
+    #[serde(default)]
+    pub embedding_provider: Option<String>,
+    #[serde(default)]
+    pub vertex_project_id: Option<String>,
+    #[serde(default)]
+    pub vertex_region: Option<String>,
+    #[serde(default)]
+    pub vertex_model: Option<String>,
+    #[serde(default)]
+    pub vertex_embedding_model: Option<String>,
+    #[serde(default)]
+    pub vertex_config: Option<Value>,
+    #[serde(default)]
+    pub gca_model: Option<String>,
+    #[serde(default)]
+    pub gca_config: Option<Value>,
+    #[serde(default)]
+    pub gca_project: Option<String>,
+    #[serde(default)]
+    pub mistral_key: Option<String>,
+    #[serde(default)]
+    pub mistral_model: Option<String>,
+    #[serde(default)]
+    pub mistral_config: Option<Value>,
+    #[serde(default)]
+    pub voyage_key: Option<String>,
+    #[serde(default)]
+    pub voyage_model: Option<String>,
+    #[serde(default)]
+    pub hypa: Option<Value>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+/// OAuth status returned by vertex_oauth_status / gca_oauth_status.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthStatus {
+    pub connected: bool,
+    #[serde(default)]
+    pub expired: bool,
+}
+
+/// Workspace metadata for create/update operations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkspaceData {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub character_id: Option<String>,
+    #[serde(default)]
+    pub preset_id: Option<String>,
+    #[serde(default)]
+    pub module_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
 
 pub struct CharacterAssetsState {
     pub assets: Mutex<HashMap<String, Vec<u8>>>,
@@ -420,44 +527,24 @@ fn build_system_instruction(prompt: &Option<String>) -> Option<Content> {
 }
 
 
-fn messages_to_contents(messages: &[Value]) -> Vec<Content> {
-    messages.iter().enumerate().filter_map(|(i, m)| {
-        let role = m.get("role").and_then(|v| v.as_str());
-        let text = m.get("text").and_then(|v| v.as_str());
-        match (role, text) {
-            (Some(role), Some(text)) => {
-                let api_role = match role { "char" => "model", r => r };
-                Some(Content {
-                    role: api_role.to_string(),
-                    parts: vec![Part { text: Some(text.to_string()), thought: None, inline_data: None }],
-                })
-            }
-            _ => {
-                log::warn!("messages_to_contents: skipping message[{i}] — missing role or text");
-                None
-            }
+fn messages_to_contents(messages: &[ChatApiMessage]) -> Vec<Content> {
+    messages.iter().map(|m| {
+        let api_role = match m.role.as_str() { "char" => "model", r => r };
+        Content {
+            role: api_role.to_string(),
+            parts: vec![Part { text: Some(m.text.clone()), thought: None, inline_data: None }],
         }
     }).collect()
 }
 
-fn messages_to_chat_messages(messages: &[Value]) -> Vec<mistral::ChatMessage> {
-    messages.iter().enumerate().filter_map(|(i, m)| {
-        let role = m.get("role").and_then(|v| v.as_str());
-        let text = m.get("text").and_then(|v| v.as_str());
-        match (role, text) {
-            (Some(role), Some(text)) => {
-                let mistral_role = match role { "model" | "char" => "assistant", r => r };
-                Some(mistral::ChatMessage {
-                    role: mistral_role.to_string(),
-                    content: text.to_string(),
-                    tool_calls: None,
-                    tool_call_id: None,
-                })
-            }
-            _ => {
-                log::warn!("messages_to_chat_messages: skipping message[{i}] — missing role or text");
-                None
-            }
+fn messages_to_chat_messages(messages: &[ChatApiMessage]) -> Vec<mistral::ChatMessage> {
+    messages.iter().map(|m| {
+        let mistral_role = match m.role.as_str() { "model" | "char" => "assistant", r => r };
+        mistral::ChatMessage {
+            role: mistral_role.to_string(),
+            content: m.text.clone(),
+            tool_calls: None,
+            tool_call_id: None,
         }
     }).collect()
 }
@@ -500,7 +587,7 @@ fn log_api_call(
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn chat_vertex(
-    messages: Vec<Value>,
+    messages: Vec<ChatApiMessage>,
     system_prompt: Option<String>,
     model: String,
     project_id: String,
@@ -578,7 +665,7 @@ pub async fn chat_vertex(
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn chat_gca(
-    messages: Vec<Value>,
+    messages: Vec<ChatApiMessage>,
     system_prompt: Option<String>,
     model: String,
     temperature: f64,
@@ -666,7 +753,7 @@ pub async fn chat_gca(
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn chat_mistral(
-    messages: Vec<Value>,
+    messages: Vec<ChatApiMessage>,
     system_prompt: Option<String>,
     model: String,
     api_key: String,
@@ -889,38 +976,22 @@ pub async fn gca_oauth_callback(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn vertex_oauth_status(state: State<'_, AuthState>) -> Result<Value, String> {
+pub fn vertex_oauth_status(state: State<'_, AuthState>) -> Result<OAuthStatus, String> {
     let tokens = state.vertex_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
     Ok(match tokens.as_ref() {
-        Some(t) if !t.is_expired() => serde_json::json!({
-            "connected": true,
-            "expired": false,
-        }),
-        Some(_) => serde_json::json!({
-            "connected": true,
-            "expired": true,
-        }),
-        None => serde_json::json!({
-            "connected": false,
-        }),
+        Some(t) if !t.is_expired() => OAuthStatus { connected: true, expired: false },
+        Some(_) => OAuthStatus { connected: true, expired: true },
+        None => OAuthStatus { connected: false, expired: false },
     })
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn gca_oauth_status(state: State<'_, AuthState>) -> Result<Value, String> {
+pub fn gca_oauth_status(state: State<'_, AuthState>) -> Result<OAuthStatus, String> {
     let tokens = state.gca_tokens.lock().map_err(|e| format!("lock poisoned: {e}"))?;
     Ok(match tokens.as_ref() {
-        Some(t) if !t.is_expired() => serde_json::json!({
-            "connected": true,
-            "expired": false,
-        }),
-        Some(_) => serde_json::json!({
-            "connected": true,
-            "expired": true,
-        }),
-        None => serde_json::json!({
-            "connected": false,
-        }),
+        Some(t) if !t.is_expired() => OAuthStatus { connected: true, expired: false },
+        Some(_) => OAuthStatus { connected: true, expired: true },
+        None => OAuthStatus { connected: false, expired: false },
     })
 }
 
@@ -1009,6 +1080,7 @@ pub fn highlight_cbs(input: String) -> Value {
                     highlighter::TokenKind::Bracket => "bracket",
                 },
                 "depth": t.depth,
+                "alt": t.alt,
             })
         }).collect::<Vec<_>>(),
         "diagnostics": diagnostics.iter().map(|d| {
@@ -1018,15 +1090,17 @@ pub fn highlight_cbs(input: String) -> Value {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn cmd_save_settings(settings: Value, app: tauri::AppHandle) -> Result<(), String> {
+pub fn cmd_save_settings(settings: AppSettings, app: tauri::AppHandle) -> Result<(), String> {
     let data_dir = persistence::get_data_dir(&app)?;
-    persistence::save_settings(&data_dir, &settings)
+    let value = serde_json::to_value(&settings).map_err(|e| e.to_string())?;
+    persistence::save_settings(&data_dir, &value)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn cmd_load_settings(app: tauri::AppHandle) -> Result<Value, String> {
+pub fn cmd_load_settings(app: tauri::AppHandle) -> Result<AppSettings, String> {
     let data_dir = persistence::get_data_dir(&app)?;
-    persistence::load_settings(&data_dir)
+    let value = persistence::load_settings(&data_dir)?;
+    serde_json::from_value(value).map_err(|e| e.to_string())
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1288,6 +1362,18 @@ pub async fn update_notification(app: tauri::AppHandle, text: String) -> Result<
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub fn cmd_save_personas(personas: Value, app: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::save_personas(&data_dir, &personas)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn cmd_load_personas(app: tauri::AppHandle) -> Result<Value, String> {
+    let data_dir = persistence::get_data_dir(&app)?;
+    persistence::load_personas(&data_dir)
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub fn cmd_save_current_preset(preset: Value, app: tauri::AppHandle) -> Result<(), String> {
     let data_dir = persistence::get_data_dir(&app)?;
     persistence::save_current_preset(&data_dir, &preset)
@@ -1300,15 +1386,17 @@ pub fn cmd_load_current_preset(app: tauri::AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn cmd_save_session(session: Value, app: tauri::AppHandle) -> Result<(), String> {
+pub fn cmd_save_session(session: SessionData, app: tauri::AppHandle) -> Result<(), String> {
     let data_dir = persistence::get_data_dir(&app)?;
-    persistence::save_session(&data_dir, &session)
+    let value = serde_json::to_value(&session).map_err(|e| e.to_string())?;
+    persistence::save_session(&data_dir, &value)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn cmd_load_session(app: tauri::AppHandle) -> Result<Value, String> {
+pub fn cmd_load_session(app: tauri::AppHandle) -> Result<SessionData, String> {
     let data_dir = persistence::get_data_dir(&app)?;
-    persistence::load_session(&data_dir)
+    let value = persistence::load_session(&data_dir)?;
+    serde_json::from_value(value).map_err(|e| e.to_string())
 }
 
 const USER_MSG_SYSTEM_PROMPT: &str =
@@ -1320,7 +1408,7 @@ const USER_MSG_TEMPERATURE: f64 = 1.0;
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn generate_user_message(
-    context: Vec<Value>,
+    context: Vec<ChatApiMessage>,
     provider: String,
     model: String,
     region: Option<String>,
@@ -1677,9 +1765,10 @@ pub fn cmd_workspace_load(id: String, app: tauri::AppHandle) -> Result<Value, St
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn cmd_workspace_update(id: String, data: Value, app: tauri::AppHandle) -> Result<(), String> {
+pub fn cmd_workspace_update(id: String, data: WorkspaceData, app: tauri::AppHandle) -> Result<(), String> {
     let data_dir = persistence::get_data_dir(&app)?;
-    persistence::workspace_update(&data_dir, &id, &data)
+    let value = serde_json::to_value(&data).map_err(|e| e.to_string())?;
+    persistence::workspace_update(&data_dir, &id, &value)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1689,13 +1778,15 @@ pub fn cmd_workspace_delete(id: String, app: tauri::AppHandle) -> Result<(), Str
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn cmd_workspace_save_session_ws(id: String, session: Value, app: tauri::AppHandle) -> Result<(), String> {
+pub fn cmd_workspace_save_session_ws(id: String, session: SessionData, app: tauri::AppHandle) -> Result<(), String> {
     let data_dir = persistence::get_data_dir(&app)?;
-    persistence::workspace_save_session(&data_dir, &id, &session)
+    let value = serde_json::to_value(&session).map_err(|e| e.to_string())?;
+    persistence::workspace_save_session(&data_dir, &id, &value)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn cmd_workspace_load_session_ws(id: String, app: tauri::AppHandle) -> Result<Value, String> {
+pub fn cmd_workspace_load_session_ws(id: String, app: tauri::AppHandle) -> Result<SessionData, String> {
     let data_dir = persistence::get_data_dir(&app)?;
-    persistence::workspace_load_session(&data_dir, &id)
+    let value = persistence::workspace_load_session(&data_dir, &id)?;
+    serde_json::from_value(value).map_err(|e| e.to_string())
 }

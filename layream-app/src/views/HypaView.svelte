@@ -1,7 +1,9 @@
 <script>
   import { invoke } from "../lib/tauri.js";
   import { onMount, onDestroy } from "svelte";
+  import { toUserError } from "../lib/errors.js";
   import HypaModal from "../components/HypaModal.svelte";
+  import { getWorkspaceVersion } from "../lib/appStore.svelte.js";
 
   let { onReady } = $props();
 
@@ -72,6 +74,30 @@
   onDestroy(() => {
     clearTimeout(hypaSettingsSaveTimeout);
     if (unlistenAppFlush) unlistenAppFlush();
+  });
+
+  // Re-load HyPA settings when workspace switches
+  $effect(() => {
+    const wsVersion = getWorkspaceVersion();
+    if (wsVersion === 0) return;
+    (async () => {
+      try {
+        const saved = await invoke("cmd_load_settings");
+        if (saved?.hypa) {
+          const h = saved.hypa;
+          if (h.enabled !== undefined) hypaEnabled = h.enabled;
+          if (h.summaryModel !== undefined) hypaSummaryModel = h.summaryModel;
+          if (h.summaryTemp !== undefined) hypaSummaryTemp = h.summaryTemp;
+          if (h.summaryPrompt !== undefined) hypaSummaryPrompt = h.summaryPrompt;
+          if (h.summaryUnit !== undefined) hypaSummaryUnit = h.summaryUnit;
+          if (h.embeddingProvider !== undefined) hypaEmbeddingProvider = h.embeddingProvider;
+          if (h.embeddingModel !== undefined) hypaEmbeddingModel = h.embeddingModel;
+          if (h.similarRatio !== undefined) hypaSimilarRatio = h.similarRatio;
+        }
+      } catch (e) {
+        console.error("Failed to reload HyPA settings after workspace switch:", e);
+      }
+    })();
   });
 
   // Single save path — called via either debounced timer (typing) or
@@ -178,9 +204,9 @@
         const name = data?.data?.name || "imported";
         hypaImportStatus = `HyPA 설정 "${name}" 임포트 완료`;
       } else {
-        hypaImportStatus = `invalid format — summaries 또는 HyPA 설정을 찾을 수 없습니다`;
+        hypaImportStatus = `올바르지 않은 형식 — summaries 또는 HyPA 설정을 찾을 수 없습니다`;
       }
-    } catch (e) { hypaImportStatus = `import error: ${e}`; }
+    } catch (e) { hypaImportStatus = toUserError(e, "HyPA 임포트").message; }
     setTimeout(() => { hypaImportStatus = ""; }, STATUS_CLEAR_MS);
   }
 
@@ -229,7 +255,7 @@
       await loadHypa();
       hypaActionStatus = `refreshed ${hypaSummaries.length} summaries`;
     } catch (e) {
-      hypaActionStatus = `refresh failed: ${e}`;
+      hypaActionStatus = toUserError(e, "HyPA 새로고침").message;
     }
     setTimeout(() => { hypaActionStatus = ""; }, STATUS_CLEAR_MS);
   }
@@ -298,7 +324,7 @@
       return summary;
     } catch (e) {
       console.error("hypa_summarize failed:", e);
-      hypaActionStatus = `Summarization failed: ${e}`;
+      hypaActionStatus = toUserError(e, "자동 요약").message;
       setTimeout(() => { hypaActionStatus = ""; }, STATUS_CLEAR_MS);
       return null;
     }

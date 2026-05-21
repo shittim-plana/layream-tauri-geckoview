@@ -1,8 +1,10 @@
 <script>
   import { onMount } from "svelte";
   import { invoke } from "../lib/tauri.js";
+  import { toUserError } from "../lib/errors.js";
   import FileImport from "../components/FileImport.svelte";
   import CBSEditor from "../components/CBSEditor.svelte";
+  import { loadAll as storeLoadAll, getWorkspaceVersion } from "../lib/appStore.svelte.js";
 
   let preset = $state(null);
   let presetName = $state("");
@@ -40,7 +42,7 @@
   async function handleFile(name, data, tempName) {
     const ext = "." + name.split(".").pop()?.toLowerCase();
     if (!PRESET_EXTS.includes(ext)) {
-      error = `지원하지 않는 형식: ${ext} (${PRESET_EXTS.join(", ")} 만 가능)`;
+      error = `지원하지 않는 형식: ${ext} (${PRESET_EXTS.join(", ")}만 가능)`;
       return;
     }
     loading = true;
@@ -54,12 +56,12 @@
         presetName = name;
         editingIndex = -1;
         error = "";
-        invoke("cmd_save_current_preset", { preset: result }).catch(e => { console.error("Auto-save failed:", e); status = "Auto-save failed"; });
+        invoke("cmd_save_current_preset", { preset: result }).catch(e => { console.error("Auto-save failed:", e); status = "자동 저장 실패"; });
       } else {
-        error = "load_preset returned null/undefined";
+        error = "프리셋을 로드할 수 없습니다. 파일 형식을 확인해 주세요.";
       }
     } catch (e) {
-      error = `load_preset error: ${String(e)}`;
+      error = toUserError(e, "프리셋 로드").message;
     }
     loading = false;
   }
@@ -89,7 +91,7 @@
         }
       }
     } catch (e) {
-      error = String(e);
+      error = toUserError(e, "프리셋 내보내기").message;
     }
   }
 
@@ -154,35 +156,44 @@
       status = "Saved!";
       setTimeout(() => { if (status === "Saved!") status = ""; }, 2000);
     } catch (e) {
-      error = `Save failed: ${String(e)}`;
+      error = toUserError(e, "프리셋 저장").message;
     }
   }
 
-  onMount(async () => {
-    try {
-      const saved = await invoke("cmd_load_current_preset");
-      if (saved && typeof saved === "object" && Object.keys(saved).length > 0) {
-        preset = saved;
-        presetName = saved.name || "Saved Preset";
-      }
-    } catch (e) {
-      console.error("Load preset failed:", e);
+  async function reloadFromStore() {
+    const { settings: storeSettings, character: storeChar, preset: storePreset } = await storeLoadAll(invoke);
+
+    if (storePreset && typeof storePreset === "object" && Object.keys(storePreset).length > 0) {
+      preset = storePreset;
+      presetName = storePreset.name || "Saved Preset";
+    } else {
+      preset = null;
+      presetName = "";
     }
-    try {
-      const ch = await invoke("cmd_load_current_character");
-      const cardName = ch?.card?.data?.name || ch?.card?.name;
+    editingIndex = -1;
+    error = "";
+    status = "";
+    if (storeChar) {
+      const cardName = storeChar?.card?.data?.name || storeChar?.card?.name;
       if (typeof cardName === "string" && cardName.length > 0) charName = cardName;
-    } catch (e) {
-      console.error("Load character for CBS preview failed:", e);
+      else charName = "Character";
+    } else {
+      charName = "Character";
     }
-    try {
-      const settings = await invoke("cmd_load_settings");
-      if (typeof settings?.userName === "string" && settings.userName.length > 0) {
-        userName = settings.userName;
-      }
-    } catch (e) {
-      console.error("Load settings for CBS preview failed:", e);
+    if (typeof storeSettings?.userName === "string" && storeSettings.userName.length > 0) {
+      userName = storeSettings.userName;
+    } else {
+      userName = "User";
     }
+  }
+
+  onMount(() => { reloadFromStore(); });
+
+  // Re-load preset data when workspace switches
+  $effect(() => {
+    const wsVersion = getWorkspaceVersion();
+    if (wsVersion === 0) return;
+    reloadFromStore();
   });
 </script>
 

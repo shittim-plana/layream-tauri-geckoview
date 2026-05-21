@@ -1,9 +1,13 @@
 <script>
   import { invoke } from "../lib/tauri.js";
   import { onMount } from "svelte";
+  import {
+    getActiveWorkspaceId,
+    initActiveWorkspaceId,
+    switchWorkspace as storeSwitchWorkspace,
+  } from "../lib/appStore.svelte.js";
 
   let workspaces = $state([]);
-  let activeId = $state(null);
   let activeName = $state("기본");
   let open = $state(false);
   let loading = $state(false);
@@ -12,16 +16,19 @@
   let showCreate = $state(false);
   let confirmDeleteId = $state(null);
 
+  // Derive local activeId from the centralized store
+  let activeId = $derived(getActiveWorkspaceId());
+
   onMount(async () => {
-    await loadSettings();
+    await loadSettingsForInit();
     await loadWorkspaces();
   });
 
-  async function loadSettings() {
+  async function loadSettingsForInit() {
     try {
       const settings = await invoke("cmd_load_settings");
       if (settings?.active_workspace_id) {
-        activeId = settings.active_workspace_id;
+        initActiveWorkspaceId(settings.active_workspace_id);
       }
     } catch (e) { console.warn("WorkspaceSelector loadSettings:", e); }
   }
@@ -30,13 +37,14 @@
     loading = true;
     try {
       workspaces = (await invoke("cmd_workspace_list")) || [];
+      const currentId = getActiveWorkspaceId();
       // Resolve active workspace name
-      if (activeId) {
-        const active = workspaces.find((w) => w.id === activeId);
+      if (currentId) {
+        const active = workspaces.find((w) => w.id === currentId);
         activeName = active ? active.name : "기본";
         // If active workspace was deleted externally, reset
         if (!active) {
-          activeId = null;
+          initActiveWorkspaceId(null);
           await saveActiveId(null);
         }
       } else {
@@ -59,60 +67,16 @@
     }
   }
 
-  async function saveCurrentSession(workspaceId) {
-    if (!workspaceId) return;
-    try {
-      const session = await invoke("cmd_load_session");
-      if (session) {
-        await invoke("cmd_workspace_save_session_ws", {
-          id: workspaceId,
-          session,
-        });
-      }
-    } catch (e) {
-      console.error("Failed to save session for workspace:", e);
-    }
-  }
-
-  async function loadWorkspaceSession(workspaceId) {
-    if (!workspaceId) return;
-    try {
-      const session = await invoke("cmd_workspace_load_session_ws", {
-        id: workspaceId,
-      });
-      if (session) {
-        await invoke("cmd_save_session", { session });
-      }
-    } catch (e) {
-      console.error("Failed to load workspace session:", e);
-    }
-  }
-
   async function switchWorkspace(id) {
-    if (id === activeId || switching) return;
+    if (id === getActiveWorkspaceId() || switching) return;
     switching = true;
     try {
-      // 1. Save current session to current workspace (if any)
-      if (activeId) {
-        await saveCurrentSession(activeId);
-      }
-      // 2. Load new workspace's session into the main session slot
-      if (id) {
-        await loadWorkspaceSession(id);
-      } else {
-        // Switching to default — reset session to empty
-        await invoke("cmd_save_session", { session: { messages: [] } });
-      }
-      // 3. Update active workspace in settings
-      activeId = id;
-      await saveActiveId(id);
-      // 4. Refresh workspace list and resolve name
+      // Delegate to centralized store — handles session save/load,
+      // settings persistence, and reactive workspace version bump.
+      await storeSwitchWorkspace(invoke, id);
+      // Refresh workspace list and resolve name
       await loadWorkspaces();
-      // 5. Reload the page to pick up new session
-      //    ChatView loads from cmd_load_session on mount, so a full reload
-      //    is the simplest way to get all views in sync.
       open = false;
-      window.location.reload();
     } catch (e) {
       console.error("Failed to switch workspace:", e);
     }
@@ -138,21 +102,26 @@
 
   async function deleteWorkspace(id) {
     try {
+      const currentId = getActiveWorkspaceId();
       // Save current session before deleting the active workspace
-      if (activeId === id) {
-        await saveCurrentSession(id);
+      if (currentId === id) {
+        try {
+          const session = await invoke("cmd_load_session");
+          if (session) {
+            await invoke("cmd_workspace_save_session_ws", { id, session });
+          }
+        } catch (e) {
+          console.error("Failed to save session for workspace:", e);
+        }
       }
       await invoke("cmd_workspace_delete", { id });
       confirmDeleteId = null;
       // If deleting the active workspace, switch to default
-      if (activeId === id) {
-        activeId = null;
-        await saveActiveId(null);
-        // Clear session to default empty
-        await invoke("cmd_save_session", {
-          session: { messages: [] },
-        });
-        window.location.reload();
+      if (currentId === id) {
+        // Use storeSwitchWorkspace to null — handles session clear,
+        // settings update, and reactive version bump.
+        await storeSwitchWorkspace(invoke, null);
+        await loadWorkspaces();
         return;
       }
       await loadWorkspaces();

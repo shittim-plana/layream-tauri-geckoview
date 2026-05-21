@@ -24,6 +24,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 base64 = "0.22"
 rand = "0.9"
 log = "0.4"
+png = "0.17"
 
 [dev-dependencies]
 hex-literal = "0.4"

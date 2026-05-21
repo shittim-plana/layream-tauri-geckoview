@@ -158,6 +158,27 @@ pub fn load_current_character(data_dir: &Path) -> Result<Value, String> {
     serde_json::from_str(&json).map_err(|e| e.to_string())
 }
 
+const PERSONAS_FILE: &str = "personas.json";
+
+pub fn save_personas(data_dir: &Path, personas: &Value) -> Result<(), String> {
+    fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(personas).map_err(|e| e.to_string())?;
+    let path = data_dir.join(PERSONAS_FILE);
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, json.as_bytes()).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn load_personas(data_dir: &Path) -> Result<Value, String> {
+    let path = data_dir.join(PERSONAS_FILE);
+    if !path.exists() {
+        return Ok(serde_json::json!({ "personas": [], "selectedPersona": -1 }));
+    }
+    let json = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&json).map_err(|e| e.to_string())
+}
+
 pub fn get_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()

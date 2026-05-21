@@ -1,7 +1,10 @@
 <script>
   import { onMount } from "svelte";
   import { invoke } from "../lib/tauri.js";
+  import { toUserError } from "../lib/errors.js";
+  import { createAutosave } from "../lib/autosave.js";
   import ModuleEditView from "./ModuleEditView.svelte";
+  import { getWorkspaceVersion } from "../lib/appStore.svelte.js";
 
   // --- Module edit state ---
   let editingModule = $state(null); // { id, name } | null
@@ -28,19 +31,19 @@
     }
   }
 
-  let saveModulesTimeout;
+  const modulesAutosave = createAutosave(async () => {
+    try {
+      const existing = await invoke("cmd_load_settings") || {};
+      await invoke("cmd_save_settings", {
+        settings: { ...existing, enabledModules },
+      });
+    } catch (e) {
+      error = toUserError(e, "모듈 설정 저장").message;
+    }
+  }, { delayMs: 500 });
+
   function scheduleModulesSave() {
-    clearTimeout(saveModulesTimeout);
-    saveModulesTimeout = setTimeout(async () => {
-      try {
-        const existing = await invoke("cmd_load_settings") || {};
-        await invoke("cmd_save_settings", {
-          settings: { ...existing, enabledModules },
-        });
-      } catch (e) {
-        error = `모듈 설정 저장 실패: ${String(e)}`;
-      }
-    }, 500);
+    modulesAutosave.schedule();
   }
 
   function isModuleEnabled(moduleId) {
@@ -128,7 +131,7 @@
       const items = await invoke(k.list);
       lists[kindId] = Array.isArray(items) ? items : [];
     } catch (e) {
-      error = `${k.label} list failed: ${String(e)}`;
+      error = toUserError(e, `${k.label} 목록 조회`).message;
     }
   }
 
@@ -149,7 +152,7 @@
     try {
       const data = await invoke(k.currentLoad);
       if (!data || (typeof data === "object" && Object.keys(data).length === 0)) {
-        error = `No current ${k.label.toLowerCase().slice(0, -1)} loaded`;
+        error = `현재 로드된 ${k.label.toLowerCase().slice(0, -1)}이(가) 없습니다`;
         return;
       }
       const name = (data?.[k.currentNameField] && String(data[k.currentNameField]).trim()) || k.defaultName;
@@ -157,7 +160,7 @@
       flashStatus(`Saved "${name}" to library`);
       await refresh(kindId);
     } catch (e) {
-      error = `Save failed: ${String(e)}`;
+      error = toUserError(e, "라이브러리 저장").message;
     }
   }
 
@@ -173,7 +176,7 @@
         flashStatus(`Loaded (no current slot for ${k.label})`);
       }
     } catch (e) {
-      error = `Load failed: ${String(e)}`;
+      error = toUserError(e, "라이브러리 로드").message;
     }
   }
 
@@ -192,7 +195,7 @@
       flashStatus("Deleted");
       await refresh(kindId);
     } catch (e) {
-      error = `Delete failed: ${String(e)}`;
+      error = toUserError(e, "삭제").message;
     }
   }
 
@@ -239,6 +242,14 @@
   }
 
   onMount(() => {
+    refreshAll();
+    loadEnabledModules();
+  });
+
+  // Re-load library data when workspace switches
+  $effect(() => {
+    const wsVersion = getWorkspaceVersion();
+    if (wsVersion === 0) return;
     refreshAll();
     loadEnabledModules();
   });

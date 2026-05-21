@@ -39,17 +39,17 @@
     try {
       let charName = "Character";
       let userName = "User";
-      try {
-        const ch = await invoke("cmd_load_current_character");
-        const cardName = ch?.card?.data?.name || ch?.card?.name;
+      const [charResult, settingsResult] = await Promise.allSettled([
+        invoke("cmd_load_current_character"),
+        invoke("cmd_load_settings"),
+      ]);
+      if (charResult.status === "fulfilled") {
+        const cardName = charResult.value?.card?.data?.name || charResult.value?.card?.name;
         if (typeof cardName === "string" && cardName.length > 0) charName = cardName;
-      } catch (e) { console.warn("preview: load character:", e); }
-      try {
-        const settings = await invoke("cmd_load_settings");
-        if (typeof settings?.userName === "string" && settings.userName.length > 0) {
-          userName = settings.userName;
-        }
-      } catch (e) { console.warn("preview: load settings:", e); }
+      }
+      if (settingsResult.status === "fulfilled" && typeof settingsResult.value?.userName === "string" && settingsResult.value.userName.length > 0) {
+        userName = settingsResult.value.userName;
+      }
       previewText = await invoke("evaluate_cbs", {
         input: "{{// Prompt preview requires a loaded preset}}",
         char_name: charName,

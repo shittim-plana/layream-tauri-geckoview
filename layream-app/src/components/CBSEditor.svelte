@@ -11,43 +11,96 @@
   let debounceTimer;
   let dragStartY = 0;
   let dragStartH = 0;
+  let highlightGen = 0;
 
-  const KIND_CLASS = {
-    control: "cbs-block",
-    macro: "cbs-fn",
-    variable: "cbs-var",
-    bracket: "cbs-identity",
-  };
+  const DEPTH_CLASSES = ["cb0", "cb1", "cb2", "cb3", "cb4", "cb5"];
+
+  function tokenClass(token) {
+    if (token.kind === "control" || token.kind === "bracket") {
+      const base = DEPTH_CLASSES[token.depth % DEPTH_CLASSES.length];
+      return token.alt ? base + "a" : base;
+    }
+    if (token.kind === "macro") return "cbs-fn";
+    if (token.kind === "variable") return "cbs-var";
+    return "";
+  }
 
   function escapeHtml(str) {
     return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
-  async function updateHighlight(text) {
+  let lastTokens = [];
+  let lastText = "";
+
+  async function updateHighlight(text, forceRust = false) {
+    const gen = ++highlightGen;
+
+    // Incremental optimization: if the edit doesn't touch brackets,
+    // shift existing token positions instead of a full Rust IPC call.
+    if (!forceRust && lastTokens.length > 0 && lastText.length > 0) {
+      const delta = text.length - lastText.length;
+      // Find the first differing character position
+      let diffStart = 0;
+      const minLen = Math.min(text.length, lastText.length);
+      while (diffStart < minLen && text[diffStart] === lastText[diffStart]) diffStart++;
+
+      // Check if the changed region contains any bracket characters
+      const changedRegion = delta >= 0
+        ? text.slice(diffStart, diffStart + Math.abs(delta) + 1)
+        : lastText.slice(diffStart, diffStart + Math.abs(delta) + 1);
+      const hasBrackets = /[{}]/.test(changedRegion);
+
+      if (!hasBrackets && delta !== 0) {
+        // Shift token positions by delta for tokens after the edit point
+        const shifted = lastTokens.map((t) => {
+          if (t.start >= diffStart) {
+            return { ...t, start: t.start + delta, end: t.end + delta };
+          } else if (t.end > diffStart) {
+            return { ...t, end: t.end + delta };
+          }
+          return t;
+        }).filter((t) => t.start >= 0 && t.end > t.start && t.end <= text.length);
+
+        lastTokens = shifted;
+        lastText = text;
+        highlightHtml = buildHtml(text, shifted);
+        // Don't update diagnostics for incremental — they can wait for next full pass
+        return;
+      }
+    }
+
     try {
       const result = await invoke("highlight_cbs", { input: text });
-      if (!result) return;
+      if (!result || gen !== highlightGen) return;
 
-      let html = "";
-      let lastEnd = 0;
-      for (const token of result.tokens) {
-        if (token.start > lastEnd) {
-          html += escapeHtml(text.slice(lastEnd, token.start));
-        }
-        const cls = KIND_CLASS[token.kind] || "";
-        html += `<span class="${cls}">${escapeHtml(text.slice(token.start, token.end))}</span>`;
-        lastEnd = token.end;
-      }
-      if (lastEnd < text.length) {
-        html += escapeHtml(text.slice(lastEnd));
-      }
-      html += "\n";
-      highlightHtml = html;
+      lastTokens = result.tokens || [];
+      lastText = text;
+      highlightHtml = buildHtml(text, result.tokens);
       diagnostics = result.diagnostics || [];
     } catch {
+      if (gen !== highlightGen) return;
+      lastTokens = [];
+      lastText = text;
       highlightHtml = escapeHtml(text) + "\n";
       diagnostics = [];
     }
+  }
+
+  function buildHtml(text, tokens) {
+    let html = "";
+    let lastEnd = 0;
+    for (const token of tokens) {
+      if (token.start > lastEnd) {
+        html += escapeHtml(text.slice(lastEnd, token.start));
+      }
+      const cls = tokenClass(token);
+      html += `<span class="${cls}">${escapeHtml(text.slice(token.start, token.end))}</span>`;
+      lastEnd = token.end;
+    }
+    if (lastEnd < text.length) {
+      html += escapeHtml(text.slice(lastEnd));
+    }
+    return html + "\n";
   }
 
   function handleInput(e) {
@@ -86,7 +139,7 @@
   }
 
   $effect(() => {
-    updateHighlight(value);
+    updateHighlight(value, true);
   });
 </script>
 

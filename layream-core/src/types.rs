@@ -1,5 +1,20 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+
+/// Deserialize a value that may be a string or a number into `Option<String>`.
+/// V3 spec uses numeric timestamps for dates, but we normalize to String.
+fn deserialize_string_or_number<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = Option::<Value>::deserialize(deserializer)?;
+    match v {
+        None => Ok(None),
+        Some(Value::String(s)) => Ok(Some(s)),
+        Some(Value::Number(n)) => Ok(Some(n.to_string())),
+        Some(other) => Ok(Some(other.to_string())),
+    }
+}
 
 // --- Enums ---
 
@@ -798,6 +813,23 @@ pub struct CharacterCardV2Data {
     pub creator: String,
     pub character_version: String,
     pub extensions: CardExtensions,
+    // V3-specific fields (Option for V2 backward compatibility)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nickname: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_string_or_number"
+    )]
+    pub creation_date: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_string_or_number"
+    )]
+    pub modification_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_only_greetings: Option<Vec<String>>,
     #[serde(flatten, default)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }

@@ -75,6 +75,8 @@ pub fn run() {
             commands::start_streaming,
             commands::stop_streaming,
             commands::update_notification,
+            commands::cmd_save_personas,
+            commands::cmd_load_personas,
             commands::cmd_save_current_preset,
             commands::cmd_load_current_preset,
             commands::cmd_save_session,

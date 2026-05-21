@@ -1,7 +1,9 @@
 <script>
   import { onMount } from "svelte";
   import { invoke } from "../lib/tauri.js";
+  import { toUserError } from "../lib/errors.js";
   import FileImport from "../components/FileImport.svelte";
+  import { getWorkspaceVersion } from "../lib/appStore.svelte.js";
 
   let character = $state(null);
   let characterName = $state("");
@@ -20,6 +22,9 @@
   // Greeting switcher: -1 selects data.first_mes; 0..N-1 selects
   // data.alternate_greetings[i]. Reset on character (re)load via $effect.
   let greetingIndex = $state(-1);
+
+  // Edit mode toggle: default is view mode.
+  let editMode = $state(false);
 
   const IMG_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
   function isImage(name) {
@@ -44,7 +49,7 @@
     } catch (e) {
       previewData = "";
       previewAsset = null;
-      error = `Asset load failed: ${e}`;
+      error = toUserError(e, "에셋 로드").message;
     }
     previewLoading = false;
   }
@@ -60,7 +65,7 @@
         : await invoke("parse_risum", { data });
       moduleParsed = result;
     } catch (e) {
-      moduleError = `parse_risum error: ${String(e)}`;
+      moduleError = toUserError(e, "모듈 파싱").message;
     }
     moduleLoading = false;
   }
@@ -69,7 +74,7 @@
     const CHAR_EXTS = [".charx", ".png", ".jpeg", ".jpg", ".json"];
     const ext = "." + name.split(".").pop()?.toLowerCase();
     if (!CHAR_EXTS.includes(ext)) {
-      error = `지원하지 않는 형식: ${ext} (${CHAR_EXTS.join(", ")} 만 가능)`;
+      error = `지원하지 않는 형식: ${ext} (${CHAR_EXTS.join(", ")}만 가능)`;
       return;
     }
     loading = true;
@@ -84,10 +89,10 @@
         error = "";
         invoke("cmd_save_current_character", { character: { card: result.card, characterName: name, assetList: result.assetList, hasModule: result.hasModule } }).catch(e => console.error("Auto-save:", e));
       } else {
-        error = "load_character returned null/undefined";
+        error = "캐릭터를 로드할 수 없습니다. 파일 형식을 확인해 주세요.";
       }
     } catch (e) {
-      error = `load_character error: ${String(e)}`;
+      error = toUserError(e, "캐릭터 로드").message;
     }
     loading = false;
   }
@@ -101,6 +106,7 @@
     moduleInfo = "";
     moduleError = "";
     greetingIndex = -1;
+    editMode = false;
   }
 
   // Total greeting count: first_mes counts as 1 if present, plus each
@@ -124,8 +130,40 @@
     }
   }
 
+  function addAlternateGreeting(d) {
+    if (!d) return;
+    if (!Array.isArray(d.alternate_greetings)) {
+      d.alternate_greetings = [];
+    }
+    d.alternate_greetings = [...d.alternate_greetings, ""];
+    greetingIndex = d.alternate_greetings.length - 1;
+  }
+
+  function removeAlternateGreeting(d, idx) {
+    if (!d || !Array.isArray(d.alternate_greetings) || idx < 0) return;
+    d.alternate_greetings = d.alternate_greetings.filter((_, i) => i !== idx);
+    // Adjust greeting index after removal.
+    const hasFirst = typeof d.first_mes === "string" && d.first_mes.length > 0;
+    const altLen = d.alternate_greetings.length;
+    if (altLen === 0) {
+      greetingIndex = hasFirst ? -1 : -1;
+    } else if (greetingIndex >= altLen) {
+      greetingIndex = altLen - 1;
+    }
+  }
+
   function cardData() {
     return character?.card?.data || character?.card || null;
+  }
+
+  // Parse tags string to array.
+  function tagsToString(tags) {
+    if (!Array.isArray(tags)) return "";
+    return tags.join(", ");
+  }
+
+  function stringToTags(str) {
+    return str.split(",").map(t => t.trim()).filter(Boolean);
   }
 
   let status = $state("");
@@ -134,10 +172,10 @@
     if (!character) return;
     try {
       await invoke("cmd_save_current_character", { character: { card: character.card, characterName, assetList: character.assetList, hasModule: character.hasModule } });
-      status = "Saved!";
-      setTimeout(() => { if (status === "Saved!") status = ""; }, 2000);
+      status = "저장 완료!";
+      setTimeout(() => { if (status === "저장 완료!") status = ""; }, 2000);
     } catch (e) {
-      error = `Save failed: ${e}`;
+      error = toUserError(e, "캐릭터 저장").message;
     }
   }
 
@@ -147,14 +185,27 @@
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
-  onMount(async () => {
+  async function reloadCharacter() {
     try {
       const saved = await invoke("cmd_load_current_character");
       if (saved && typeof saved === "object" && saved.card) {
         character = saved;
         characterName = saved.characterName || "Saved Character";
+      } else {
+        character = null;
+        characterName = "";
       }
     } catch (e) { console.error("Load character failed:", e); }
+  }
+
+  onMount(() => { reloadCharacter(); });
+
+  // Re-load character when workspace switches
+  $effect(() => {
+    const wsVersion = getWorkspaceVersion();
+    if (wsVersion === 0) return;
+    error = "";
+    reloadCharacter();
   });
 </script>
 
@@ -191,7 +242,13 @@
       <div class="card-header">
         <span class="card-title">{data?.name || characterName}</span>
         <div style="display: flex; gap: 6px;">
-          <button class="btn btn-sm btn-primary" onclick={saveCharacter}>Save</button>
+          <button
+            class="btn btn-sm btn-secondary"
+            onclick={() => editMode = !editMode}
+          >{editMode ? "보기" : "편집"}</button>
+          {#if editMode}
+            <button class="btn btn-sm btn-primary" onclick={saveCharacter}>저장</button>
+          {/if}
           <button class="btn btn-sm btn-danger" onclick={closeCharacter}>Close</button>
         </div>
       </div>
@@ -218,93 +275,225 @@
 
     <!-- Info Tab -->
     {#if subTab === "info" && data}
-      {#if data.description}
-        <div class="card">
-          <div class="card-header"><span class="card-title">Description</span></div>
-          <div class="card-body">
-            <textarea class="textarea" rows="5" bind:value={data.description}></textarea>
-          </div>
-        </div>
-      {/if}
 
-      {#if data.personality}
-        <div class="card">
-          <div class="card-header"><span class="card-title">Personality</span></div>
-          <div class="card-body">
-            <textarea class="textarea" rows="3" bind:value={data.personality}></textarea>
-          </div>
+      <!-- Name -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">이름</span></div>
+        <div class="card-body">
+          {#if editMode}
+            <input class="input" type="text" bind:value={data.name} placeholder="캐릭터 이름" />
+          {:else}
+            <p style="font-size: 14px; color: var(--fg);">{data.name || "(없음)"}</p>
+          {/if}
         </div>
-      {/if}
+      </div>
 
-      {#if data.scenario}
-        <div class="card">
-          <div class="card-header"><span class="card-title">Scenario</span></div>
-          <div class="card-body">
-            <textarea class="textarea" rows="3" bind:value={data.scenario}></textarea>
-          </div>
+      <!-- Description -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">설명 (Description)</span></div>
+        <div class="card-body">
+          {#if editMode}
+            <textarea class="textarea" rows="5" bind:value={data.description} placeholder="캐릭터 설명"></textarea>
+          {:else}
+            {#if data.description}
+              <pre style="font-size: 13px; color: var(--fg2); white-space: pre-wrap; word-wrap: break-word; font-family: inherit; line-height: 1.6;">{data.description}</pre>
+            {:else}
+              <p style="font-size: 13px; color: var(--fg3);">(없음)</p>
+            {/if}
+          {/if}
         </div>
-      {/if}
+      </div>
 
+      <!-- Personality -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">성격 (Personality)</span></div>
+        <div class="card-body">
+          {#if editMode}
+            <textarea class="textarea" rows="3" bind:value={data.personality} placeholder="캐릭터 성격"></textarea>
+          {:else}
+            {#if data.personality}
+              <pre style="font-size: 13px; color: var(--fg2); white-space: pre-wrap; word-wrap: break-word; font-family: inherit; line-height: 1.6;">{data.personality}</pre>
+            {:else}
+              <p style="font-size: 13px; color: var(--fg3);">(없음)</p>
+            {/if}
+          {/if}
+        </div>
+      </div>
+
+      <!-- Scenario -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">시나리오 (Scenario)</span></div>
+        <div class="card-body">
+          {#if editMode}
+            <textarea class="textarea" rows="3" bind:value={data.scenario} placeholder="시나리오"></textarea>
+          {:else}
+            {#if data.scenario}
+              <pre style="font-size: 13px; color: var(--fg2); white-space: pre-wrap; word-wrap: break-word; font-family: inherit; line-height: 1.6;">{data.scenario}</pre>
+            {:else}
+              <p style="font-size: 13px; color: var(--fg3);">(없음)</p>
+            {/if}
+          {/if}
+        </div>
+      </div>
+
+      <!-- First Message & Alternate Greetings -->
       {@const greetTotal = greetingCount(data)}
-      {#if greetTotal > 0}
-        {@const altLen = data.alternate_greetings?.length || 0}
-        {@const hasFirst = typeof data.first_mes === "string" && data.first_mes.length > 0}
-        {@const minIdx = hasFirst ? -1 : 0}
-        {@const safeIdx = Math.max(minIdx, Math.min(greetingIndex, altLen - 1))}
-        {@const label = safeIdx < 0 ? "First Message" : `Alternate #${safeIdx + 1}`}
+      {@const altLen = data.alternate_greetings?.length || 0}
+      {@const hasFirst = typeof data.first_mes === "string" && data.first_mes.length > 0}
+      {#if editMode || greetTotal > 0}
+        {@const minIdx = hasFirst ? -1 : (editMode ? -1 : 0)}
+        {@const safeIdx = editMode
+          ? Math.max(-1, Math.min(greetingIndex, altLen - 1))
+          : Math.max(minIdx, Math.min(greetingIndex, altLen - 1))}
+        {@const label = safeIdx < 0 ? "첫 메시지 (First Message)" : `대체 인사 #${safeIdx + 1} (Alternate)`}
         {@const position = safeIdx < 0 ? 1 : (hasFirst ? safeIdx + 2 : safeIdx + 1)}
+        {@const totalDisplay = editMode ? (hasFirst || data.first_mes !== undefined ? 1 : 0) + altLen : greetTotal}
         <div class="card">
           <div class="card-header">
             <span class="card-title">{label}</span>
             <div style="display: flex; gap: 6px; align-items: center;">
-              <button
-                class="btn btn-sm btn-secondary"
-                disabled={safeIdx <= minIdx}
-                onclick={() => greetingIndex = safeIdx - 1}
-              >‹</button>
-              <span style="font-size: 12px; color: var(--fg3);">{position}/{greetTotal}</span>
-              <button
-                class="btn btn-sm btn-secondary"
-                disabled={safeIdx >= altLen - 1}
-                onclick={() => greetingIndex = safeIdx + 1}
-              >›</button>
+              {#if totalDisplay > 1 || (!editMode && greetTotal > 1)}
+                <button
+                  class="btn btn-sm btn-secondary"
+                  disabled={safeIdx <= (hasFirst ? -1 : 0)}
+                  onclick={() => greetingIndex = safeIdx - 1}
+                >&#8249;</button>
+                <span style="font-size: 12px; color: var(--fg3);">{position}/{totalDisplay || greetTotal}</span>
+                <button
+                  class="btn btn-sm btn-secondary"
+                  disabled={safeIdx >= altLen - 1}
+                  onclick={() => greetingIndex = safeIdx + 1}
+                >&#8250;</button>
+              {/if}
+              {#if editMode}
+                <button
+                  class="btn btn-sm btn-secondary"
+                  onclick={() => addAlternateGreeting(data)}
+                  title="대체 인사 추가"
+                >+</button>
+                {#if safeIdx >= 0}
+                  <button
+                    class="btn btn-sm btn-danger"
+                    onclick={() => removeAlternateGreeting(data, safeIdx)}
+                    title="이 대체 인사 삭제"
+                  >-</button>
+                {/if}
+              {/if}
             </div>
           </div>
           <div class="card-body">
-            <textarea
-              class="textarea"
-              rows="4"
-              value={getGreeting(data, safeIdx)}
-              oninput={(e) => setGreeting(data, safeIdx, e.target.value)}
-            ></textarea>
+            {#if editMode}
+              <textarea
+                class="textarea"
+                rows="4"
+                value={getGreeting(data, safeIdx)}
+                oninput={(e) => setGreeting(data, safeIdx, e.target.value)}
+                placeholder={safeIdx < 0 ? "첫 메시지" : "대체 인사"}
+              ></textarea>
+            {:else}
+              {@const text = getGreeting(data, safeIdx)}
+              {#if text}
+                <pre style="font-size: 13px; color: var(--fg2); white-space: pre-wrap; word-wrap: break-word; font-family: inherit; line-height: 1.6;">{text}</pre>
+              {:else}
+                <p style="font-size: 13px; color: var(--fg3);">(없음)</p>
+              {/if}
+            {/if}
           </div>
         </div>
       {/if}
 
-      {#if data.mes_example}
+      <!-- Message Examples -->
+      {#if editMode || data.mes_example}
         <div class="card">
-          <div class="card-header"><span class="card-title">Message Examples</span></div>
+          <div class="card-header"><span class="card-title">메시지 예시 (Message Examples)</span></div>
           <div class="card-body">
-            <textarea class="textarea" rows="4" bind:value={data.mes_example}></textarea>
+            {#if editMode}
+              <textarea class="textarea" rows="4" bind:value={data.mes_example} placeholder="메시지 예시"></textarea>
+            {:else}
+              <pre style="font-size: 13px; color: var(--fg2); white-space: pre-wrap; word-wrap: break-word; font-family: inherit; line-height: 1.6;">{data.mes_example}</pre>
+            {/if}
           </div>
         </div>
       {/if}
 
-      {#if data.system_prompt}
+      <!-- System Prompt -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">시스템 프롬프트 (System Prompt)</span></div>
+        <div class="card-body">
+          {#if editMode}
+            <textarea class="textarea" rows="3" bind:value={data.system_prompt} placeholder="시스템 프롬프트"></textarea>
+          {:else}
+            {#if data.system_prompt}
+              <pre style="font-size: 13px; color: var(--fg2); white-space: pre-wrap; word-wrap: break-word; font-family: inherit; line-height: 1.6;">{data.system_prompt}</pre>
+            {:else}
+              <p style="font-size: 13px; color: var(--fg3);">(없음)</p>
+            {/if}
+          {/if}
+        </div>
+      </div>
+
+      <!-- Post History Instructions -->
+      {#if editMode || data.post_history_instructions}
         <div class="card">
-          <div class="card-header"><span class="card-title">System Prompt</span></div>
+          <div class="card-header"><span class="card-title">후속 지시 (Post History Instructions)</span></div>
           <div class="card-body">
-            <textarea class="textarea" rows="3" bind:value={data.system_prompt}></textarea>
+            {#if editMode}
+              <textarea class="textarea" rows="3" bind:value={data.post_history_instructions} placeholder="후속 지시"></textarea>
+            {:else}
+              <pre style="font-size: 13px; color: var(--fg2); white-space: pre-wrap; word-wrap: break-word; font-family: inherit; line-height: 1.6;">{data.post_history_instructions}</pre>
+            {/if}
           </div>
         </div>
       {/if}
 
-      <!-- Regex Scripts -->
+      <!-- Creator Notes -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">제작자 노트 (Creator Notes)</span></div>
+        <div class="card-body">
+          {#if editMode}
+            <textarea class="textarea" rows="3" bind:value={data.creator_notes} placeholder="제작자 노트"></textarea>
+          {:else}
+            {#if data.creator_notes}
+              <pre style="font-size: 13px; color: var(--fg2); white-space: pre-wrap; word-wrap: break-word; font-family: inherit; line-height: 1.6;">{data.creator_notes}</pre>
+            {:else}
+              <p style="font-size: 13px; color: var(--fg3);">(없음)</p>
+            {/if}
+          {/if}
+        </div>
+      </div>
+
+      <!-- Tags -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">태그 (Tags)</span></div>
+        <div class="card-body">
+          {#if editMode}
+            <input
+              class="input"
+              type="text"
+              value={tagsToString(data.tags)}
+              oninput={(e) => { data.tags = stringToTags(e.target.value); }}
+              placeholder="쉼표로 구분 (예: tag1, tag2, tag3)"
+            />
+          {:else}
+            {#if data.tags?.length > 0}
+              <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                {#each data.tags as tag}
+                  <span style="font-size: 12px; padding: 3px 8px; background: var(--bg4); border-radius: var(--radius-sm); color: var(--fg2);">{tag}</span>
+                {/each}
+              </div>
+            {:else}
+              <p style="font-size: 13px; color: var(--fg3);">(없음)</p>
+            {/if}
+          {/if}
+        </div>
+      </div>
+
+      <!-- Regex Scripts (view only) -->
       {@const regexScripts = data.customScripts || data.extensions?.risuai?.customScripts || []}
       {#if regexScripts.length > 0}
         <div class="card">
           <div class="card-header">
-            <span class="card-title">Regex Scripts ({regexScripts.length})</span>
+            <span class="card-title">정규식 스크립트 ({regexScripts.length})</span>
           </div>
           <div class="card-body">
             {#each regexScripts as script, i}
@@ -337,7 +526,7 @@
       {@const entries = data?.character_book?.entries || []}
       <div class="card">
         <div class="card-header">
-          <span class="card-title">Lorebook ({entries.length} entries)</span>
+          <span class="card-title">로어북 ({entries.length} entries)</span>
         </div>
         {#if entries.length > 0}
           <div class="card-body">
@@ -370,7 +559,7 @@
           </div>
         {:else}
           <div class="card-body" style="text-align: center; color: var(--fg3);">
-            No lorebook entries.
+            로어북 항목이 없습니다.
           </div>
         {/if}
       </div>
@@ -385,7 +574,7 @@
       }))}
       <div class="card">
         <div class="card-header">
-          <span class="card-title">Assets ({character.assetList?.length ?? 0})</span>
+          <span class="card-title">에셋 ({character.assetList?.length ?? 0})</span>
         </div>
         <div class="card-body">
           {#if character.assetList?.length > 0}
@@ -411,7 +600,7 @@
               {/each}
             </div>
           {:else}
-            <p style="color: var(--fg3); text-align: center;">No assets in this character file.</p>
+            <p style="color: var(--fg3); text-align: center;">이 캐릭터 파일에 에셋이 없습니다.</p>
           {/if}
         </div>
       </div>
@@ -421,15 +610,15 @@
     {#if subTab === "module"}
       {#if character.hasModule}
         <div class="card">
-          <div class="card-header"><span class="card-title">.risum Module (embedded)</span></div>
+          <div class="card-header"><span class="card-title">.risum 모듈 (내장)</span></div>
           <div class="card-body">
-            <p style="color: var(--accent); font-size: 13px;">Module data detected in character file.</p>
+            <p style="color: var(--accent); font-size: 13px;">캐릭터 파일에 모듈 데이터가 포함되어 있습니다.</p>
           </div>
         </div>
       {/if}
 
       <div class="card">
-        <div class="card-header"><span class="card-title">Load .risum Module</span></div>
+        <div class="card-header"><span class="card-title">.risum 모듈 불러오기</span></div>
         <div class="card-body">
           <FileImport
             accept="application/octet-stream,application/json"
@@ -448,7 +637,7 @@
           {/if}
           {#if moduleInfo && !moduleParsed && !moduleError && !moduleLoading}
             <div style="margin-top: 8px; padding: 8px; background: var(--bg3); border-radius: var(--radius-sm); font-size: 12px; color: var(--fg2);">
-              Module loaded: {moduleInfo}
+              모듈 로드됨: {moduleInfo}
             </div>
           {/if}
         </div>
@@ -457,7 +646,7 @@
       {#if moduleParsed}
         <div class="card">
           <div class="card-header">
-            <span class="card-title">{moduleParsed.name || "Unnamed Module"}</span>
+            <span class="card-title">{moduleParsed.name || "이름 없는 모듈"}</span>
           </div>
           <div class="card-body">
             {#if moduleParsed.description}

@@ -1,5 +1,6 @@
 <script>
   import { invoke } from "../lib/tauri.js";
+  import { toUserError } from "../lib/errors.js";
 
   let { moduleId = "", moduleName = "", onBack = () => {} } = $props();
 
@@ -51,7 +52,8 @@
         alwaysActive: entry.alwaysActive ?? entry.always_active ?? false,
         selective: entry.selective ?? false,
         useRegex: entry.useRegex ?? entry.use_regex ?? false,
-        activationPercent: entry.activationPercent ?? entry.activation_percent ?? null,
+        activationPercent: entry.activationPercent ?? entry.activation_percent ?? 0,
+        disable: entry.disable ?? false,
       }));
 
       const rawRegex = mod?.regex ?? [];
@@ -64,7 +66,7 @@
         ableFlag: r.ableFlag ?? r.able_flag ?? true,
       }));
     } catch (e) {
-      error = `모듈 로드 실패: ${String(e)}`;
+      error = toUserError(e, "모듈 로드").message;
     }
     loading = false;
   }
@@ -84,6 +86,7 @@
       selective: entry.selective,
       useRegex: entry.useRegex,
       activationPercent: entry.activationPercent,
+      disable: entry.disable,
       extentions: { risu_case_sensitive: false },
     }));
 
@@ -119,7 +122,7 @@
       await invoke("cmd_save_module", { id: moduleId, name, data });
       flashStatus("저장 완료");
     } catch (e) {
-      error = `저장 실패: ${String(e)}`;
+      error = toUserError(e, "모듈 저장").message;
     }
     saving = false;
   }
@@ -136,7 +139,8 @@
       alwaysActive: false,
       selective: false,
       useRegex: false,
-      activationPercent: null,
+      activationPercent: 0,
+      disable: false,
     }];
     expandedLore = lorebook.length - 1;
   }
@@ -270,8 +274,8 @@
                 <span style="font-size: 11px; color: var(--fg3); max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                   {lorePreview(entry).preview}
                 </span>
-                <span style="font-size: 11px; color: {entry.alwaysActive ? 'var(--green)' : 'var(--fg3)'};">
-                  {entry.alwaysActive ? "활성" : "조건"}
+                <span style="font-size: 11px; color: {entry.disable ? 'var(--red)' : entry.alwaysActive ? 'var(--green)' : 'var(--fg3)'};">
+                  {entry.disable ? "비활성" : entry.alwaysActive ? "항상 활성" : "조건"}
                 </span>
                 <span style="font-size: 14px; color: var(--fg3); flex-shrink: 0;">
                   {expandedLore === i ? "▲" : "▼"}
@@ -282,12 +286,12 @@
               {#if expandedLore === i}
                 <div style="padding: 0 14px 14px; border-top: 1px solid var(--bg4);">
                   <div class="field" style="margin-top: 10px;">
-                    <label class="label">키</label>
+                    <label class="label">키워드</label>
                     <input class="input" type="text" bind:value={entry.key} placeholder="트리거 키워드 (쉼표 구분)" />
                   </div>
                   <div class="field">
-                    <label class="label">보조 키</label>
-                    <input class="input" type="text" bind:value={entry.secondkey} placeholder="보조 키 (선택)" />
+                    <label class="label">보조 키워드</label>
+                    <input class="input" type="text" bind:value={entry.secondkey} placeholder="보조 키워드 (선택적 모드에서 사용)" />
                   </div>
                   <div class="field">
                     <label class="label">내용</label>
@@ -298,6 +302,13 @@
                     <input class="input" type="text" bind:value={entry.comment} placeholder="메모 (선택)" />
                   </div>
                   <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                    <div class="toggle-row" style="padding: 6px 0; gap: 6px;">
+                      <span style="font-size: 12px; color: var(--fg2);">비활성화</span>
+                      <label class="toggle">
+                        <input type="checkbox" bind:checked={entry.disable} />
+                        <span class="toggle-track"></span>
+                      </label>
+                    </div>
                     <div class="toggle-row" style="padding: 6px 0; gap: 6px;">
                       <span style="font-size: 12px; color: var(--fg2);">항상 활성</span>
                       <label class="toggle">
@@ -311,6 +322,13 @@
                         <input type="checkbox" bind:checked={entry.selective} />
                         <span class="toggle-track"></span>
                       </label>
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 6px;">
+                    <div style="display: flex; align-items: center; gap: 6px; flex: 1; min-width: 180px;">
+                      <label class="label" style="margin: 0; font-size: 12px; white-space: nowrap;">활성화 확률</label>
+                      <input type="range" min="0" max="100" bind:value={entry.activationPercent} style="flex: 1; accent-color: var(--accent);" />
+                      <span style="font-size: 11px; color: var(--fg3); min-width: 32px; text-align: right;">{entry.activationPercent}%</span>
                     </div>
                     <div style="display: flex; align-items: center; gap: 6px;">
                       <label class="label" style="margin: 0; font-size: 12px;">삽입 순서</label>

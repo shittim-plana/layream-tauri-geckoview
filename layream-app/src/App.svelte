@@ -2,8 +2,11 @@
   import "./app.css";
   import { onMount } from "svelte";
   import { invoke, isTauri } from "./lib/tauri.js";
+  import { toUserError } from "./lib/errors.js";
+  import { subscribe as subscribeToasts, dismiss as dismissToast } from "./lib/flashError.js";
   import PresetView from "./views/PresetView.svelte";
   import CharacterView from "./views/CharacterView.svelte";
+  import PersonaView from "./views/PersonaView.svelte";
   import LibraryView from "./views/LibraryView.svelte";
   import TestView from "./views/TestView.svelte";
   import SettingsView from "./views/SettingsView.svelte";
@@ -21,6 +24,10 @@
 
   let activeTab = $state("preset");
   let oauthMessage = $state("");
+
+  // Global toast notifications from lib/flashError.js
+  let toasts = $state([]);
+  const unsubToasts = subscribeToasts((t) => { toasts = t; });
 
   async function requestPermissions() {
     try { await invoke("request_storage_permission"); } catch (e) { console.warn("request_storage_permission:", e); }
@@ -48,13 +55,13 @@
         result = await invoke("gca_oauth_callback", { code });
         window.dispatchEvent(new CustomEvent("oauth-complete", { detail: "gca" }));
       } else {
-        oauthMessage = "Unknown OAuth scheme";
+        oauthMessage = "알 수 없는 OAuth 방식입니다";
         setTimeout(() => { oauthMessage = ""; }, 3000);
         return;
       }
       oauthMessage = result || "Connected!";
     } catch (e) {
-      oauthMessage = `OAuth failed: ${e}`;
+      oauthMessage = toUserError(e, "OAuth").message;
     }
     setTimeout(() => { oauthMessage = ""; }, 5000);
   }
@@ -135,6 +142,7 @@
   const tabs = [
     { id: "preset", label: "Preset", icon: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
     { id: "character", label: "Character", icon: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" },
+    { id: "persona", label: "Persona", icon: "M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 7a4 4 0 110-8 4 4 0 010 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" },
     { id: "library", label: "Library", icon: "M4 19V5a2 2 0 012-2h12a2 2 0 012 2v14M4 19l4-4h12M4 19h16" },
     { id: "test", label: "Test", icon: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" },
     { id: "settings", label: "Settings", icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z" },
@@ -144,7 +152,7 @@
 <div class="header">
   <div style="display: flex; align-items: center; gap: 10px;">
     <h1 style="font-size: 18px; font-weight: 600;">Layream</h1>
-    <span style="font-size: 12px; color: var(--fg3);">v0.3.3-alpha</span>
+    <span style="font-size: 12px; color: var(--fg3);">v0.3.5-alpha</span>
   </div>
   <WorkspaceSelector />
 </div>
@@ -155,12 +163,29 @@
 </div>
 {/if}
 
+{#if toasts.length > 0}
+<div class="toast-container">
+  {#each toasts as toast (toast.id)}
+    <div
+      class="toast toast-{toast.level}"
+      role="alert"
+    >
+      <span class="toast-message">{toast.message}</span>
+      <button class="toast-dismiss" onclick={() => dismissToast(toast.id)} aria-label="닫기">&times;</button>
+    </div>
+  {/each}
+</div>
+{/if}
+
 <div class="content">
   <div style:display={activeTab === "preset" ? "block" : "none"}>
     <PresetView />
   </div>
   <div style:display={activeTab === "character" ? "block" : "none"}>
     <CharacterView />
+  </div>
+  <div style:display={activeTab === "persona" ? "block" : "none"}>
+    <PersonaView />
   </div>
   <div style:display={activeTab === "library" ? "block" : "none"}>
     <LibraryView />

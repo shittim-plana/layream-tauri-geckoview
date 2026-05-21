@@ -12,6 +12,8 @@ pub struct HighlightToken {
     pub end: usize,
     pub kind: TokenKind,
     pub depth: usize,
+    /// true when this is an alternating (second shade) block at this depth
+    pub alt: bool,
 }
 
 const DEPTH_COLORS: &[&str] = &[
@@ -32,6 +34,12 @@ pub fn highlight(input: &str) -> Vec<HighlightToken> {
     let mut pos = 0;
     let mut depth = 0usize;
 
+    // Track alternation per depth level: each new opening block at a given depth
+    // increments the counter, and odd counters get alt=true.
+    let mut depth_counter: [usize; 64] = [0; 64];
+    // Stack of (depth, alt) for matching closing tags with their opening tag's shade.
+    let mut open_stack: Vec<(usize, bool)> = Vec::new();
+
     while pos < bytes.len() {
         if pos + 1 < bytes.len() && bytes[pos] == b'{' && bytes[pos + 1] == b'{' {
             let bracket_start = pos;
@@ -42,21 +50,35 @@ pub fn highlight(input: &str) -> Vec<HighlightToken> {
                 let trimmed = content.trim();
                 let kind = classify(trimmed);
 
-                let token_depth = if trimmed.starts_with('#') {
+                let (token_depth, token_alt) = if trimmed.starts_with('#') {
                     // Opening tag: tokens get current (outer) depth, then increment
                     let d = depth;
+                    let capped = d.min(63);
+                    let alt = depth_counter[capped] % 2 == 1;
+                    open_stack.push((d, alt));
+                    depth_counter[capped] += 1;
                     depth += 1;
-                    d
-                } else if trimmed.starts_with('/') {
-                    // Closing tag: decrement first, then tokens get new (outer) depth
+                    (d, alt)
+                } else if trimmed.starts_with('/')
+                    && !trimmed.starts_with("//")
+                {
+                    // Closing tag: pop stack, use matched opening's depth and alt
                     depth = depth.saturating_sub(1);
-                    depth
+                    if let Some((matched_depth, matched_alt)) = open_stack.pop() {
+                        (matched_depth, matched_alt)
+                    } else {
+                        (depth, false)
+                    }
                 } else if trimmed.starts_with(':') {
-                    // :else and similar: belongs to the enclosing block's depth
-                    depth.saturating_sub(1)
+                    // :else and similar: belongs to the enclosing block's depth and alt
+                    if let Some(&(matched_depth, matched_alt)) = open_stack.last() {
+                        (matched_depth, matched_alt)
+                    } else {
+                        (depth.saturating_sub(1), false)
+                    }
                 } else {
-                    // Plain variables/macros: current depth
-                    depth
+                    // Plain variables/macros: current depth, no alt
+                    (depth, false)
                 };
 
                 tokens.push(HighlightToken {
@@ -64,6 +86,7 @@ pub fn highlight(input: &str) -> Vec<HighlightToken> {
                     end: bracket_start + 2,
                     kind: TokenKind::Bracket,
                     depth: token_depth,
+                    alt: token_alt,
                 });
 
                 tokens.push(HighlightToken {
@@ -71,6 +94,7 @@ pub fn highlight(input: &str) -> Vec<HighlightToken> {
                     end,
                     kind,
                     depth: token_depth,
+                    alt: token_alt,
                 });
 
                 tokens.push(HighlightToken {
@@ -78,6 +102,7 @@ pub fn highlight(input: &str) -> Vec<HighlightToken> {
                     end: end + 2,
                     kind: TokenKind::Bracket,
                     depth: token_depth,
+                    alt: token_alt,
                 });
 
                 pos = end + 2;
@@ -134,6 +159,21 @@ pub struct Diagnostic {
     pub message: String,
 }
 
+/// CBS-like keywords that suggest a single `{` was meant to be `{{`.
+fn looks_like_cbs(s: &str) -> bool {
+    const PREFIXES: &[&str] = &[
+        "#if", "#when", "#each", "#pure", "#func", "#escape", "#code",
+        "/if", "/when", "/each", "/pure", "/func", "/escape", "/code",
+        ":else",
+        "char", "bot", "user", "persona",
+        "getvar", "setvar", "getglobalvar", "addvar", "settempvar", "tempvar",
+        "setdefault", "slot",
+        "calc", "random", "print", "comment", "//",
+    ];
+    let lower = s.to_ascii_lowercase();
+    PREFIXES.iter().any(|p| lower.starts_with(p))
+}
+
 pub fn check_blocks(input: &str) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let mut stack: Vec<(String, usize)> = Vec::new();
@@ -141,8 +181,8 @@ pub fn check_blocks(input: &str) -> Vec<Diagnostic> {
     for (line_num, line) in input.lines().enumerate() {
         let bytes = line.as_bytes();
         let mut pos = 0;
-        while pos + 3 < bytes.len() {
-            if bytes[pos] == b'{' && bytes[pos + 1] == b'{' {
+        while pos < bytes.len() {
+            if pos + 3 < bytes.len() && bytes[pos] == b'{' && bytes[pos + 1] == b'{' {
                 if let Some(end) = find_close_in(bytes, pos + 2) {
                     let tag = line[pos + 2..end].trim();
                     if let Some(name) = tag.strip_prefix('#') {
@@ -167,6 +207,17 @@ pub fn check_blocks(input: &str) -> Vec<Diagnostic> {
                 } else {
                     pos += 1;
                 }
+            } else if bytes[pos] == b'{' && (pos + 1 >= bytes.len() || bytes[pos + 1] != b'{') {
+                // Single `{` — check if the content after looks like CBS
+                let rest = &line[pos + 1..];
+                let ahead = if rest.len() > 20 { &rest[..20] } else { rest };
+                if looks_like_cbs(ahead) {
+                    diagnostics.push(Diagnostic {
+                        line: line_num + 1,
+                        message: format!("single {{{{ — did you mean {{{{{{{{?"),
+                    });
+                }
+                pos += 1;
             } else {
                 pos += 1;
             }
@@ -348,5 +399,103 @@ mod tests {
     #[test]
     fn classify_else_as_control() {
         assert_eq!(classify(":else"), TokenKind::Control);
+    }
+
+    // --- Alternation tests ---
+
+    #[test]
+    fn alt_single_block_not_alt() {
+        // First block at depth 0 should have alt=false
+        let tokens = highlight("{{#if 1}}yes{{/if}}");
+        let alts: Vec<bool> = tokens.iter().map(|t| t.alt).collect();
+        assert_eq!(alts, vec![false, false, false, false, false, false]);
+    }
+
+    #[test]
+    fn alt_two_consecutive_blocks_same_depth() {
+        // Two consecutive blocks at depth 0: first alt=false, second alt=true
+        let tokens = highlight("{{#if 1}}a{{/if}}{{#if 2}}b{{/if}}");
+        assert_eq!(tokens.len(), 12);
+        let alts: Vec<bool> = tokens.iter().map(|t| t.alt).collect();
+        assert_eq!(
+            alts,
+            vec![
+                false, false, false, // {{#if 1}} ... {{/if}} — first block
+                false, false, false, // {{/if}} closing first block
+                true, true, true,    // {{#if 2}} — second block at depth 0
+                true, true, true,    // {{/if}} closing second block
+            ]
+        );
+    }
+
+    #[test]
+    fn alt_three_consecutive_blocks_cycle() {
+        // Three blocks: false, true, false (cycles back)
+        let tokens = highlight("{{#if 1}}a{{/if}}{{#if 2}}b{{/if}}{{#if 3}}c{{/if}}");
+        assert_eq!(tokens.len(), 18);
+        let alts: Vec<bool> = tokens.iter().map(|t| t.alt).collect();
+        // Block 1: alt=false, Block 2: alt=true, Block 3: alt=false
+        assert!(!alts[0]); // first block
+        assert!(alts[6]);  // second block
+        assert!(!alts[12]); // third block
+    }
+
+    #[test]
+    fn alt_else_matches_opening() {
+        // :else should match the alt of its enclosing #if
+        let tokens = highlight("{{#if x}}a{{:else}}b{{/if}}");
+        assert_eq!(tokens.len(), 9);
+        let alts: Vec<bool> = tokens.iter().map(|t| t.alt).collect();
+        // All should be false (first block at depth 0)
+        assert_eq!(alts, vec![false, false, false, false, false, false, false, false, false]);
+    }
+
+    #[test]
+    fn alt_closing_matches_opening() {
+        // The closing tag should have the same alt as its opening tag
+        let tokens = highlight("{{#if 1}}a{{/if}}{{#if 2}}b{{/if}}");
+        // First block tokens: indices 0-5 (alt=false)
+        // Second block tokens: indices 6-11 (alt=true)
+        assert!(!tokens[0].alt); // opening bracket of first
+        assert!(!tokens[3].alt); // closing bracket of first's /if opening
+        assert!(tokens[6].alt);  // opening bracket of second
+        assert!(tokens[9].alt);  // closing bracket of second's /if opening
+    }
+
+    // --- Single brace typo detection tests ---
+
+    #[test]
+    fn single_brace_typo_detected() {
+        let diags = check_blocks("{char}");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("single"));
+        assert!(diags[0].message.contains("did you mean"));
+    }
+
+    #[test]
+    fn single_brace_non_cbs_no_warning() {
+        // A single { with non-CBS content should not warn
+        let diags = check_blocks("{hello world}");
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn double_brace_no_warning() {
+        // Proper {{char}} should not trigger single-brace warning
+        let diags = check_blocks("{{char}}");
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn single_brace_setvar_detected() {
+        let diags = check_blocks("{setvar::x::1}");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("single"));
+    }
+
+    #[test]
+    fn single_brace_block_tag_detected() {
+        let diags = check_blocks("{#if true}yes{/if}");
+        assert_eq!(diags.len(), 2); // both { are detected
     }
 }

@@ -7,9 +7,7 @@ Prompt editor, AI testing studio, and bot creation tool.
 ## Overview / 개요
 
 - **Android app**: Tauri 2.0 + Rust backend + Svelte 5 frontend + **GeckoView 128 ESR**
-- **Web app** (planned): Svelte + Rust (WASM), GitHub Pages
 - **Core**: Shared Rust crate (`layream-core`) — prompt parsing, CBS evaluation, AI API, cryptography
-- **Future**: Servo/Verso engine replacement, Web app (WASM)
 
 ## Features / 기능
 
@@ -126,13 +124,6 @@ npm run tauri android build -- --apk --target aarch64
 **v0.3.5-alpha** — [Download APK / APK 다운로드](https://github.com/shittim-plana/layream/releases/tag/v0.3.5-alpha)
 
 144 tests (122 unit + 12 interop + 10 quality gate). APK ~184MB (GeckoView 포함).
-
-## Roadmap
-
-- [ ] Explicit caching (Vertex AI)
-- [ ] CBS editor (CodeMirror 6)
-- [ ] Servo/Verso engine integration
-- [ ] Web app (WASM build)
 
 ## License / 라이선스
 

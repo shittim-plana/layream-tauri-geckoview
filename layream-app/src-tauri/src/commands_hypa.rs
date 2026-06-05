@@ -21,7 +21,7 @@ use serde_json::Value;
 use tauri::State;
 use tokio::sync::Mutex;
 
-use crate::commands::AuthState;
+use crate::commands_auth::AuthState;
 use crate::persistence;
 
 // === Concurrency state ===

@@ -581,3 +581,165 @@ pub fn workspace_load_hypa(data_dir: &Path, id: &str) -> Result<Value, String> {
     let json = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     serde_json::from_str(&json).map_err(|e| e.to_string())
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Benchmark: session.json save cost (serialize + atomic tmp+rename).
+//
+// What is measured: the body of `save_session` — the same code path
+// `workspace_save_session` runs — i.e. `serde_json::to_string_pretty` over
+// `{ "messages": [...] }` followed by `fs::write(tmp)` + `fs::rename`.
+//
+// Message shape mirrors the frontend (messageStore.js / ChatView.svelte):
+//   { chatId, parentId, branchId, role, text, time, [pinned], [alternatives] }
+// Sizes are documented constants below, not magic values (§1.4). The produced
+// byte count is reported alongside each timing so the payload is observable.
+//
+// Run: cargo test --release --lib bench_session -- --nocapture --test-threads=1
+// Release is the production build mode; debug serde_json is several× slower
+// and would not reflect what users experience.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod bench_session {
+    use super::*;
+    use std::time::Instant;
+
+    // Representative content sizes (chars). User turns are short prompts;
+    // assistant ("char") turns are longer prose. Every 4th assistant turn
+    // carries two regeneration alternatives, matching the swipe feature.
+    const USER_TEXT_LEN: usize = 280;
+    const CHAR_TEXT_LEN: usize = 1200;
+    const ALT_TEXT_LEN: usize = 1200;
+    const ALTS_EVERY: usize = 4;
+
+    const WARMUP: usize = 5;
+    const ITERS: usize = 50;
+
+    fn text_of(len: usize, seed: usize) -> String {
+        // Deterministic ASCII filler with spaces so it resembles prose and
+        // exercises serde_json string escaping the way real text would.
+        let words = [
+            "the", "model", "responds", "with", "context", "about", "the",
+            "current", "scene", "and", "asks", "a", "question", "before",
+            "continuing", "the", "narrative", "naturally", "again", "now",
+        ];
+        let mut s = String::with_capacity(len + 16);
+        let mut i = seed;
+        while s.len() < len {
+            s.push_str(words[i % words.len()]);
+            s.push(' ');
+            i += 1;
+        }
+        s.truncate(len);
+        s
+    }
+
+    fn id_of(idx: usize) -> String {
+        format!("{:08x}-{:08x}-msg", idx as u64, (idx.wrapping_mul(2654435761)) as u32)
+    }
+
+    fn build_session(num_messages: usize) -> Value {
+        let mut messages = Vec::with_capacity(num_messages);
+        let mut prev_id: Option<String> = None;
+        for idx in 0..num_messages {
+            let is_user = idx % 2 == 0;
+            let role = if is_user { "user" } else { "char" };
+            let text = if is_user {
+                text_of(USER_TEXT_LEN, idx)
+            } else {
+                text_of(CHAR_TEXT_LEN, idx)
+            };
+            let mut msg = serde_json::json!({
+                "chatId": id_of(idx),
+                "parentId": prev_id,
+                "branchId": "main",
+                "role": role,
+                "text": text,
+                "time": "2:45:30 PM",
+            });
+            if !is_user {
+                msg["pinned"] = Value::Bool(idx % 7 == 0);
+                if (idx / 2) % ALTS_EVERY == 0 {
+                    msg["alternatives"] = serde_json::json!([
+                        text_of(ALT_TEXT_LEN, idx + 1),
+                        text_of(ALT_TEXT_LEN, idx + 2),
+                    ]);
+                }
+            }
+            messages.push(msg);
+            prev_id = Some(id_of(idx));
+        }
+        serde_json::json!({
+            "messages": messages,
+            "activeBranchId": "main",
+            "branches": [ { "id": "main", "name": "main", "headId": prev_id, "forkPoint": null } ],
+        })
+    }
+
+    fn percentile(sorted_micros: &[u128], p: f64) -> u128 {
+        if sorted_micros.is_empty() {
+            return 0;
+        }
+        let rank = (p / 100.0 * (sorted_micros.len() as f64 - 1.0)).round() as usize;
+        sorted_micros[rank]
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_session_save() {
+        let dir = std::env::temp_dir().join(format!("layream_bench_{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        println!("\n=== session.json save benchmark (release) ===");
+        println!("iters/size: {} (after {} warmup)\n", ITERS, WARMUP);
+        println!(
+            "{:>8} | {:>10} | {:>8} | {:>8} | {:>8} | {:>8} | {:>10}",
+            "messages", "bytes", "min(ms)", "med(ms)", "p90(ms)", "max(ms)", "serialize"
+        );
+        println!("{}", "-".repeat(78));
+
+        for &n in &[100usize, 500, 1000, 5000] {
+            let session = build_session(n);
+
+            // Observable payload size: serialize once up front.
+            let sample = serde_json::to_string_pretty(&session).unwrap();
+            let bytes = sample.len();
+
+            // Warmup (fills page cache, stabilizes fs state).
+            for _ in 0..WARMUP {
+                save_session(&dir, &session).unwrap();
+            }
+
+            // Measure full save_session (serialize + write tmp + rename).
+            let mut totals: Vec<u128> = Vec::with_capacity(ITERS);
+            // Separately measure serialize-only to attribute the split.
+            let mut sers: Vec<u128> = Vec::with_capacity(ITERS);
+            for _ in 0..ITERS {
+                let t0 = Instant::now();
+                let _ = serde_json::to_string_pretty(&session).unwrap();
+                sers.push(t0.elapsed().as_micros());
+
+                let t1 = Instant::now();
+                save_session(&dir, &session).unwrap();
+                totals.push(t1.elapsed().as_micros());
+            }
+            totals.sort_unstable();
+            sers.sort_unstable();
+
+            let med_ser = percentile(&sers, 50.0) as f64 / 1000.0;
+            println!(
+                "{:>8} | {:>10} | {:>8.3} | {:>8.3} | {:>8.3} | {:>8.3} | {:>8.3}ms",
+                n,
+                bytes,
+                percentile(&totals, 0.0) as f64 / 1000.0,
+                percentile(&totals, 50.0) as f64 / 1000.0,
+                percentile(&totals, 90.0) as f64 / 1000.0,
+                percentile(&totals, 100.0) as f64 / 1000.0,
+                med_ser,
+            );
+        }
+        println!();
+
+        // Cleanup (§5.2: release the bench artifacts).
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

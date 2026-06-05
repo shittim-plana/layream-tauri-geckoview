@@ -78,9 +78,9 @@ Prompt editor, AI testing studio, and bot creation tool.
 ## Project Structure / 프로젝트 구조
 
 ```text
-layream-core/       Shared Rust library (18 modules, 144 tests)
+layream-core/       Shared Rust library (18 modules, 200 tests)
   src/
-    cbs/              CBS parser + highlighter
+    cbs/              CBS parser (LALRPOP math grammar) + highlighter
     preset.rs         Preset parsing (RPack → gzip → msgpack → AES-GCM)
     charx.rs          Character parsing + lazy loading
     vertex_auth.rs    Vertex OAuth + PKCE
@@ -96,7 +96,8 @@ layream-app/        Tauri 2.0 app
                       ModuleEditView, TestView
   src/lib/            13 modules (assemblePrompt, messageStore, triggerEngine, etc.)
   src/components/     FileImport, CBSEditor, HypaModal, WorkspaceSelector, ResizableTextarea
-  src-tauri/src/      commands.rs, commands_hypa.rs, persistence.rs
+  src-tauri/src/      7 command modules (auth, chat, library, workspace,
+                      settings, cbs, platform) + commands_hypa.rs, persistence.rs
   gen/android/        GeckoView integration, AssetServer, IPC extension
 ```
 

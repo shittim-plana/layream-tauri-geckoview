@@ -117,9 +117,9 @@ npm run tauri android build -- --apk --target aarch64
 
 ## Status / 상태
 
-**v0.3.5-alpha** — [Download APK / APK 다운로드](https://github.com/shittim-plana/layream/releases/tag/v0.3.5-alpha)
+**v0.4.0-alpha** — [Download APK / APK 다운로드](https://github.com/shittim-plana/layream/releases/tag/v0.4.0-alpha)
 
-144 tests (122 unit + 12 interop + 10 quality gate). APK ~184MB (GeckoView 포함).
+200 tests (122 unit + 56 behavior + 12 interop + 10 quality gate). APK ~184MB (GeckoView 포함).
 
 ## License / 라이선스
 

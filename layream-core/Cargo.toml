@@ -25,6 +25,11 @@ base64 = "0.22"
 rand = "0.9"
 log = "0.4"
 png = "0.17"
+lalrpop-util = "0.22"
+logos = "0.14"
+
+[build-dependencies]
+lalrpop = "0.22"
 
 [dev-dependencies]
 hex-literal = "0.4"

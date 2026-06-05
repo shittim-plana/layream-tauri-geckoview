@@ -32,6 +32,7 @@
   let vertexEmbeddingModel = $state("gemini-embedding-2");
   let vertexFetchedModels = $state([]);
   let vertexFetching = $state(false);
+  let vertexConnecting = $state(false);
   let vertexConfig = $state({
     temperature: 0.9,
     top_p: undefined,
@@ -211,6 +212,8 @@
   }
 
   async function startVertexAuth() {
+    if (vertexConnecting) return;
+    vertexConnecting = true;
     dbg("startVertexAuth: calling invoke...");
     try {
       const url = await invoke("vertex_oauth_start");
@@ -237,7 +240,7 @@
       // Fallback: open in external browser
       dbg("Falling back to external browser...");
       await openWithBrowserPicker(url);
-    } catch (e) { dbg(`Vertex auth CATCH: ${e}`); }
+    } catch (e) { dbg(`Vertex auth CATCH: ${e}`); } finally { vertexConnecting = false; }
   }
 
   // Listen for auth completion events emitted by App.svelte deep link handler.
@@ -295,6 +298,8 @@
   }
 
   async function startGcaAuth() {
+    if (gcaConnecting) return;
+    gcaConnecting = true;
     dbg("startGcaAuth...");
     try {
       // Try in-app GeckoView OAuth first (uses deep link redirect URI, no loopback)
@@ -325,7 +330,7 @@
       if (url) {
         await openWithBrowserPicker(url);
       }
-    } catch (e) { dbg(`GCA auth error: ${e}`); }
+    } catch (e) { dbg(`GCA auth error: ${e}`); } finally { gcaConnecting = false; }
   }
 
   async function disconnectGca() {
@@ -334,6 +339,7 @@
     gcaUserName = ""; gcaUserEmail = ""; gcaServiceTier = ""; gcaOptOut = false;
   }
 
+  let gcaConnecting = $state(false);
   let gcaProjectLoading = $state(false);
 
   async function loadGcaProfile() {
@@ -563,10 +569,11 @@
   <div class="card">
     <div class="card-header">
       <span class="card-title">Vertex AI OAuth</span>
-      <span class="status-dot {statusClass(vertexStatus)}"></span>
+      <span class="status-dot {statusClass(vertexStatus)}" title={statusText(vertexStatus)} role="img" aria-label="Vertex 연결 상태: {statusText(vertexStatus)}"></span>
+      {#if vertexConnecting}<span class="status-dot" style="background: var(--blue);"></span>{/if}
     </div>
     <div class="card-body">
-      <p style="font-size: 12px; color: var(--fg2); margin-bottom: 12px;">{statusText(vertexStatus)}</p>
+      <p role="status" aria-live="polite" style="font-size: 12px; color: var(--fg2); margin-bottom: 12px;">{statusText(vertexStatus)}</p>
 
       {#if vertexStatus?.connected && !vertexStatus?.expired}
         <div style="display: flex; gap: 6px; margin-bottom: 12px;">
@@ -660,10 +667,11 @@
   <div class="card">
     <div class="card-header">
       <span class="card-title">Gemini Code Assist</span>
-      <span class="status-dot {statusClass(gcaStatus)}"></span>
+      <span class="status-dot {statusClass(gcaStatus)}" title={statusText(gcaStatus)} role="img" aria-label="GCA 연결 상태: {statusText(gcaStatus)}"></span>
+      {#if gcaConnecting}<span class="status-dot" style="background: var(--blue);"></span>{/if}
     </div>
     <div class="card-body">
-      <p style="font-size: 12px; color: var(--fg2); margin-bottom: 12px;">{statusText(gcaStatus)}</p>
+      <p role="status" aria-live="polite" style="font-size: 12px; color: var(--fg2); margin-bottom: 12px;">{statusText(gcaStatus)}</p>
 
       {#if gcaStatus?.connected && !gcaStatus?.expired}
         {#if gcaUserEmail}

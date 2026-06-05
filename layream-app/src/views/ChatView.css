@@ -121,12 +121,18 @@
   .msg-actions { opacity: 1; }
 }
 .msg-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  min-height: 30px;
   background: none;
   border: none;
   color: var(--fg3);
   cursor: pointer;
-  font-size: 14px;
-  padding: 2px 5px;
+  font-size: 15px;
+  line-height: 1;
+  padding: 4px;
   opacity: 0.5;
 }
 .msg-action-btn:hover { opacity: 1; }
@@ -183,6 +189,10 @@
   background: var(--bg3); border: 1px solid var(--bg4);
   border-radius: var(--radius-sm); padding: 2px 8px;
   color: var(--fg2); cursor: pointer; font-size: 12px;
+}
+.swipe-nav button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .chat-error-toast {
   position: fixed;
@@ -461,5 +471,37 @@
 .empty-state-hint {
   font-size: 12px;
   color: var(--fg3);
+  line-height: 1.8;
+}
+
+/* --- Scroll-to-bottom FAB --- */
+.scroll-to-bottom {
+  position: sticky;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg3);
+  border: 1px solid var(--bg4);
+  color: var(--fg2);
+  cursor: pointer;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.scroll-to-bottom:active {
+  background: var(--bg4);
+}
+
+/* --- Empty state ordered list --- */
+.empty-steps {
+  list-style: decimal;
+  padding-left: 20px;
+  text-align: left;
+  color: var(--fg3);
+  font-size: 13px;
   line-height: 1.8;
 }

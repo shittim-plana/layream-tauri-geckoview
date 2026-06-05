@@ -2,6 +2,7 @@
   import { invoke } from "../lib/tauri.js";
   import { onMount, onDestroy } from "svelte";
   import { toUserError } from "../lib/errors.js";
+  import { flashError } from "../lib/flashError.js";
   import HypaModal from "../components/HypaModal.svelte";
   import ResizableTextarea from "../components/ResizableTextarea.svelte";
   import { getWorkspaceVersion } from "../lib/appStore.svelte.js";
@@ -48,6 +49,7 @@
       hypaSettingsLoaded = true;
     } catch (e) {
       console.error("Failed to load HyPA settings:", e);
+      flashError(e, "HyPA 설정 로드");
       hypaSettingsLoaded = true;
     }
     onReady?.({
@@ -69,6 +71,7 @@
       });
     } catch (e) {
       console.error("HypaView app-flush listener unavailable:", e);
+      flashError(e, "HyPA app-flush 리스너");
     }
   });
 
@@ -97,6 +100,7 @@
         }
       } catch (e) {
         console.error("Failed to reload HyPA settings after workspace switch:", e);
+        flashError(e, "HyPA 설정 재로드");
       }
     })();
   });
@@ -117,7 +121,7 @@
         similarRatio: hypaSimilarRatio,
       };
       await invoke("cmd_save_settings", { settings: existing });
-    } catch (e) { console.error("Failed to save HyPA settings:", e); }
+    } catch (e) { console.error("Failed to save HyPA settings:", e); flashError(e, "HyPA 설정 저장"); }
   }
 
   function scheduleHypaSettingsSave() {
@@ -148,7 +152,7 @@
       const data = await invoke("hypa_load_all");
       hypaSummaries = data?.summaries || [];
       hypaMemoryCount = hypaSummaries.length;
-    } catch (e) { console.error("Failed to load HyPA:", e); }
+    } catch (e) { console.error("Failed to load HyPA:", e); flashError(e, "HyPA 로드"); }
   }
 
   async function saveHypa() {
@@ -157,7 +161,7 @@
       // full hypa.json object (containing `summaries` key) so the file is
       // overwritten atomically. Outer key matches the Rust parameter name.
       await invoke("hypa_save_all", { summaries: { summaries: hypaSummaries } });
-    } catch (e) { console.error("Failed to save HyPA:", e); }
+    } catch (e) { console.error("Failed to save HyPA:", e); flashError(e, "HyPA 저장"); }
   }
 
   function exportHypa() {
@@ -207,7 +211,7 @@
       } else {
         hypaImportStatus = `올바르지 않은 형식 — summaries 또는 HyPA 설정을 찾을 수 없습니다`;
       }
-    } catch (e) { hypaImportStatus = toUserError(e, "HyPA 임포트").message; }
+    } catch (e) { hypaImportStatus = toUserError(e, "HyPA 임포트").message; flashError(e, "HyPA 임포트"); }
     setTimeout(() => { hypaImportStatus = ""; }, STATUS_CLEAR_MS);
   }
 
@@ -273,6 +277,7 @@
       return;
     } catch (e) {
       console.error("hypa_cleanup failed, doing local cleanup:", e);
+      flashError(e, "HyPA 정리");
     }
     // Fallback: drop locally-empty summaries (chatMemos empty).
     const before = hypaSummaries.length;
@@ -325,6 +330,7 @@
       return summary;
     } catch (e) {
       console.error("hypa_summarize failed:", e);
+      flashError(e, "자동 요약");
       hypaActionStatus = toUserError(e, "자동 요약").message;
       setTimeout(() => { hypaActionStatus = ""; }, STATUS_CLEAR_MS);
       return null;
@@ -350,6 +356,7 @@
       return Array.isArray(results) ? results : [];
     } catch (e) {
       console.error("hypa_search failed:", e);
+      flashError(e, "HyPA 검색");
       return [];
     }
   }
@@ -427,10 +434,10 @@
         <button class="btn btn-sm btn-danger" onclick={clearHypa}>Clear All</button>
       </div>
       {#if hypaImportStatus}
-        <p style="font-size: 11px; color: var(--orange); margin-top: 8px;">{hypaImportStatus}</p>
+        <p role="status" aria-live="polite" style="font-size: 11px; color: var(--orange); margin-top: 8px;">{hypaImportStatus}</p>
       {/if}
       {#if hypaActionStatus}
-        <p style="font-size: 11px; color: var(--fg2); margin-top: 4px;">{hypaActionStatus}</p>
+        <p role="status" aria-live="polite" style="font-size: 11px; color: var(--fg2); margin-top: 4px;">{hypaActionStatus}</p>
       {/if}
     {/if}
   </div>

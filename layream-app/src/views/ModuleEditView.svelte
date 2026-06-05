@@ -213,13 +213,13 @@
   </div>
 
   {#if error}
-    <div class="card" style="border-color: var(--red); color: var(--red);">
+    <div class="card" role="alert" style="border-color: var(--red); color: var(--red);">
       <div class="card-body">{error}</div>
     </div>
   {/if}
 
   {#if status}
-    <div class="card" style="border-color: var(--accent); color: var(--accent);">
+    <div class="card" role="status" aria-live="polite" style="border-color: var(--accent); color: var(--accent);">
       <div class="card-body">{status}</div>
     </div>
   {/if}

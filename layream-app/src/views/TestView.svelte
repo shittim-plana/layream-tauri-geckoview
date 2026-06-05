@@ -15,11 +15,20 @@
   // --- Request Logs ---
   let requestLogs = $state([]);
   let selectedLog = $state(null);
+  let logsLoading = $state(false);
+  let logsError = $state("");
 
   async function loadLogs() {
+    logsLoading = true;
+    logsError = "";
     try {
       requestLogs = await invoke("get_request_logs") || [];
-    } catch (e) { console.error("Failed to load logs:", e); }
+    } catch (e) {
+      console.error("Failed to load logs:", e);
+      logsError = "로그를 불러오지 못했습니다: " + e;
+    } finally {
+      logsLoading = false;
+    }
   }
 
   async function clearLogs() {
@@ -27,7 +36,10 @@
       await invoke("clear_request_logs");
       requestLogs = [];
       selectedLog = null;
-    } catch (e) { console.error("Failed to clear logs:", e); }
+    } catch (e) {
+      console.error("Failed to clear logs:", e);
+      logsError = "로그를 지우지 못했습니다: " + e;
+    }
   }
 
   // --- Prompt Preview ---
@@ -123,7 +135,11 @@
           <button class="btn btn-sm btn-danger" onclick={clearLogs}>Clear</button>
         {/if}
       </div>
-      {#if requestLogs.length > 0}
+      {#if logsError}
+        <div class="status-row" style="border-color: var(--red); color: var(--red);">{logsError}</div>
+      {:else if logsLoading}
+        <p class="section-note" style="text-align: center; padding: 24px;">로그를 불러오는 중…</p>
+      {:else if requestLogs.length > 0}
         <div class="card-body" style="max-height: 400px; overflow-y: auto;">
           {#each requestLogs as log, i}
             <div

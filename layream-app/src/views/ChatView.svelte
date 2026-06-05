@@ -41,7 +41,27 @@
   let togglePanelOpen = $state(false);
   let charAvatarUrl = $state("");
   let charName = $state("");
+  let chatMessagesEl = $state(null);
+  let isNearBottom = $state(true);
+  let copiedMsgId = $state(null);
+  const STICK_TO_BOTTOM_PX = 120;
   const ERROR_CLEAR_MS = 3000;
+
+  function handleMessagesScroll(e) {
+    const el = e.target;
+    isNearBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < STICK_TO_BOTTOM_PX;
+  }
+  function scrollToBottom() {
+    isNearBottom = true;
+    chatBottom?.scrollIntoView({ block: "end", behavior: "smooth" });
+  }
+  async function copyMessage(msg) {
+    try {
+      await navigator.clipboard.writeText(msg.text);
+      copiedMsgId = msg.chatId;
+      setTimeout(() => { if (copiedMsgId === msg.chatId) copiedMsgId = null; }, 1500);
+    } catch (e) { flashError(e, "복사"); }
+  }
 
   function flashError(rawOrMsg, contextHint) {
     const { kind, message } = toUserError(rawOrMsg, contextHint);
@@ -124,7 +144,7 @@
 
   $effect(() => {
     messages; streamingText;
-    if (chatBottom) requestAnimationFrame(() => { chatBottom.scrollIntoView({ block: "end", behavior: "smooth" }); });
+    if (chatBottom && isNearBottom) { requestAnimationFrame(() => { chatBottom.scrollIntoView({ block: "end", behavior: "smooth" }); }); }
   });
 
   $effect(() => {
@@ -373,17 +393,19 @@
     </div>
   {/if}
 
-  <div class="chat-messages">
+  <div class="chat-messages" bind:this={chatMessagesEl} onscroll={handleMessagesScroll}>
     {#if visibleMessages.length === 0 && !streaming}
       <div class="empty-state">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
         </svg>
         <p>프롬프트를 테스트할 대화를 시작하세요</p>
-        <p class="empty-state-hint">1. Settings에서 API 프로바이더 설정</p>
-        <p class="empty-state-hint">2. Character 탭에서 캐릭터 로드</p>
-        <p class="empty-state-hint">3. Preset 탭에서 프리셋 로드</p>
-        <p class="empty-state-hint">4. 아래 입력창에 메시지를 보내세요</p>
+        <ol class="empty-steps">
+          <li>Settings에서 API 프로바이더 설정</li>
+          <li>Character 탭에서 캐릭터 로드</li>
+          <li>Preset 탭에서 프리셋 로드</li>
+          <li>아래 입력창에 메시지 전송</li>
+        </ol>
       </div>
     {/if}
 
@@ -406,6 +428,7 @@
               </button>
               <button class="msg-action-btn msg-regen-btn" onclick={() => regenerateFrom(msg)} disabled={streaming} title="여기서 재생성" aria-label="이 응답부터 재생성">↻</button>
             {/if}
+            <button class="msg-action-btn" onclick={() => copyMessage(msg)} title={copiedMsgId === msg.chatId ? "복사됨" : "복사"}>{copiedMsgId === msg.chatId ? "✓" : "📋"}</button>
             <button class="msg-action-btn" onclick={() => startEdit(msg)} disabled={streaming || editingMsgId !== null} title="편집" aria-label="메시지 편집">✏</button>
             <button class="msg-action-btn msg-delete-btn" onclick={() => deleteMessage(msg.chatId)} disabled={streaming} title="삭제" aria-label="메시지 삭제">×</button>
           </div>
@@ -523,6 +546,12 @@
       </div>
     {/if}
 
+    {#if !isNearBottom && visibleMessages.length > 0}
+      <button class="scroll-to-bottom" onclick={scrollToBottom} title="최신 메시지로 이동" aria-label="최신 메시지로 스크롤">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6" /></svg>
+      </button>
+    {/if}
+
     <div bind:this={chatBottom} aria-hidden="true"></div>
   </div>
 
@@ -556,10 +585,10 @@
     </div>
     <div class="input-row">
       {#if visibleMessages.length > 0}
-        <button class="btn btn-sm btn-secondary" onclick={clearChat} disabled={streaming} style="flex-shrink: 0; padding: 6px 10px; font-size: 11px; align-self: center;">Clear</button>
+        <button class="btn-icon" onclick={clearChat} disabled={streaming} title="대화 비우기" aria-label="대화 비우기" style="flex-shrink: 0; align-self: center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z" /></svg></button>
       {/if}
       {#if visibleMessages.length > 0 && visibleMessages[visibleMessages.length - 1].role === "char"}
-        <button class="btn btn-sm btn-secondary" onclick={regenerateResponse} disabled={streaming} style="flex-shrink: 0; padding: 6px 10px; font-size: 11px; align-self: center;" title="응답 재생성" aria-label="응답 재생성">↻</button>
+        <button class="btn-icon" onclick={regenerateResponse} disabled={streaming} title="응답 재생성" aria-label="응답 재생성" style="flex-shrink: 0; align-self: center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6" /><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" /></svg></button>
       {/if}
       <textarea class="chat-input" rows="1" placeholder="메시지를 입력하세요..." bind:value={chatInput} bind:this={chatInputEl} onkeydown={handleChatKeydown} oninput={autoResize} style="height: auto; min-height: 36px;"></textarea>
       {#if streaming}
@@ -567,11 +596,12 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
         </button>
       {:else}
-        <button class="send-btn" onclick={sendMessage} disabled={!chatInput.trim()}>
+        <button class="send-btn" onclick={sendMessage} disabled={!chatInput.trim()} title="전송" aria-label="메시지 전송">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" /></svg>
         </button>
       {/if}
     </div>
+    <div style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)" role="status" aria-live="polite">{streaming ? "응답 생성 중..." : ""}</div>
   </div>
 </div>
 

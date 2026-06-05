@@ -59,6 +59,7 @@
   // Inputs are locked except in "stopped" so that mid-run param mutation
   // doesn't desync the loop's reading of state.
   let inputsLocked = $derived(!isStopped);
+  let statusMessage = $derived(isRunning ? "실행 중" : isPaused ? "일시정지" : "대기 중");
 
   // --- Schema validation ---
   // Returns { schema, error }. error="" on success or empty input.
@@ -245,6 +246,9 @@
     </div>
   </div>
   <div class="card-body">
+    <div class="status-row" role="status" aria-live="polite">
+      <span style="font-size: 13px; color: var(--fg);">Autopilot 상태: <strong>{statusMessage}</strong></span>
+    </div>
     <div class="field">
       <label class="label">Turns ({TURN_MIN}-{TURN_MAX})</label>
       <input class="input" type="number" min={TURN_MIN} max={TURN_MAX} bind:value={autopilotTurns} disabled={inputsLocked} />
@@ -329,7 +333,10 @@
 
 {#if autopilotLog.length > 0}
   <div class="card">
-    <div class="card-header"><span class="card-title">Execution Log</span></div>
+    <div class="card-header">
+      <span class="card-title">Execution Log</span>
+      <button class="btn btn-sm btn-secondary" onclick={() => (autopilotLog = [])} disabled={isRunning}>Clear</button>
+    </div>
     <div class="card-body" style="max-height: 300px; overflow-y: auto;">
       {#each autopilotLog as entry}
         <div style="font-size: 12px; padding: 4px 0; border-bottom: 1px solid var(--bg4); color: var(--fg2);">
@@ -338,4 +345,9 @@
       {/each}
     </div>
   </div>
+{:else}
+  <div class="card"><div class="card-body"><div class="empty-state" style="padding: 28px 20px;">
+    <p>실행 로그가 없습니다.</p>
+    <p class="section-note">Start 버튼으로 테스트 루프를 실행해보세요.</p>
+  </div></div></div>
 {/if}

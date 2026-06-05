@@ -166,6 +166,7 @@ body {
   padding: 12px;
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* --- Card --- */
@@ -177,6 +178,8 @@ body {
   margin-bottom: 12px;
   overflow: hidden;
 }
+
+.card:last-child { margin-bottom: 0; }
 
 .card-header {
   padding: 12px 14px;
@@ -218,6 +221,7 @@ body {
 .btn-danger { background: var(--red); color: #fff; }
 .btn-sm { padding: 5px 10px; font-size: 12px; }
 .btn-block { width: 100%; justify-content: center; }
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .btn-icon {
   padding: 6px;
   background: none;
@@ -227,6 +231,14 @@ body {
   border-radius: 6px;
 }
 .btn-icon:active { background: var(--bg4); }
+.btn-icon:disabled { opacity: 0.55; cursor: not-allowed; }
+
+@media (hover: hover) and (pointer: fine) {
+  .btn-primary:hover { background: #8a7eff; }
+  .btn-secondary:hover { background: var(--bg3); }
+  .btn-danger:hover { background: #fa8585; }
+  .btn-icon:hover { background: var(--bg4); color: var(--fg); }
+}
 
 /* --- Form Elements --- */
 
@@ -286,6 +298,30 @@ textarea {
 
 button {
   font-family: inherit;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  width: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+input[type="range"] {
+  padding: 0;
+  border: none;
+  background: none;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+input:disabled, textarea:disabled, select:disabled,
+.input:disabled, .textarea:disabled, .select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* --- Toggle --- */
@@ -654,7 +690,7 @@ button {
 
 .toast-container {
   position: fixed;
-  top: 8px;
+  top: calc(8px + env(safe-area-inset-top));
   left: 50%;
   transform: translateX(-50%);
   z-index: 9999;
@@ -719,4 +755,53 @@ button {
 @keyframes toastIn {
   from { opacity: 0; transform: translateY(-8px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-in,
+  .toast,
+  .ws-dropdown {
+    animation: none;
+  }
+}
+
+.list-row-button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 14px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.list-row-button:active {
+  background: var(--bg3);
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg3);
+  border: 1px solid var(--bg4);
+  border-radius: var(--radius-sm);
+  margin-bottom: 10px;
+}
+
+.section-note {
+  font-size: 12px;
+  color: var(--fg2);
+  line-height: 1.5;
 }

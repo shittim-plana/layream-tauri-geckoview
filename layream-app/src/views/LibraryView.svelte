@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "../lib/tauri.js";
   import { toUserError } from "../lib/errors.js";
+  import { flashError } from "../lib/flashError.js";
   import { createAutosave } from "../lib/autosave.js";
   import ModuleEditView from "./ModuleEditView.svelte";
   import { getWorkspaceVersion } from "../lib/appStore.svelte.js";
@@ -27,6 +28,7 @@
       enabledModules = Array.isArray(s.enabledModules) ? s.enabledModules : [];
     } catch (e) {
       console.warn("loadEnabledModules:", e);
+      flashError(e, "활성 모듈 로드");
       enabledModules = [];
     }
   }
@@ -264,13 +266,13 @@
 {:else}
 <div>
   {#if error}
-    <div class="card" style="border-color: var(--red); color: var(--red);">
+    <div class="card" role="alert" style="border-color: var(--red); color: var(--red);">
       <div class="card-body">{error}</div>
     </div>
   {/if}
 
   {#if status}
-    <div class="card" style="border-color: var(--accent); color: var(--accent);">
+    <div class="card" role="status" aria-live="polite" style="border-color: var(--accent); color: var(--accent);">
       <div class="card-body">{status}</div>
     </div>
   {/if}

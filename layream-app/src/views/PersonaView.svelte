@@ -1,6 +1,7 @@
 <script>
   import { onMount } from "svelte";
   import { invoke } from "../lib/tauri.js";
+  import { flashError } from "../lib/flashError.js";
   import {
     getPersonas, getSelectedPersona,
     setPersonas, setSelectedPersona,
@@ -17,6 +18,7 @@
   let adding = $state(false);
   let newName = $state("");
   let newPrompt = $state("");
+  let confirmDeleteIdx = $state(null);
 
   function sync() {
     personas = getPersonas();
@@ -28,6 +30,7 @@
       await loadPersonas(invoke);
     } catch (e) {
       console.warn("loadPersonas:", e);
+      flashError(e, "페르소나 로드");
     }
     sync();
   });
@@ -45,6 +48,7 @@
       await savePersonas(invoke, list, sel);
     } catch (e) {
       console.error("savePersonas:", e);
+      flashError(e, "페르소나 저장");
     }
   }
 
@@ -164,17 +168,19 @@
       <li
         class="prompt-item"
         class:active={selectedIdx === idx}
-        onclick={() => selectPersona(idx)}
+        style="padding: 0;"
       >
-        <div class="persona-avatar">
-          {persona.icon || persona.name.charAt(0).toUpperCase()}
-        </div>
-        <div style="flex: 1; min-width: 0;">
-          <div class="prompt-item-name">{persona.name}</div>
-          {#if persona.note}
-            <div class="prompt-item-text" style="font-size: 11px;">{persona.note}</div>
-          {/if}
-        </div>
+        <button class="list-row-button" onclick={() => selectPersona(idx)}>
+          <div class="persona-avatar">
+            {persona.icon || persona.name.charAt(0).toUpperCase()}
+          </div>
+          <div style="flex: 1; min-width: 0;">
+            <div class="prompt-item-name">{persona.name}</div>
+            {#if persona.note}
+              <div class="prompt-item-text" style="font-size: 11px;">{persona.note}</div>
+            {/if}
+          </div>
+        </button>
         <div style="display: flex; gap: 4px;" onclick={(e) => e.stopPropagation()}>
           <button class="btn-icon" title="편집" onclick={() => startEdit(idx)}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -182,12 +188,21 @@
               <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
             </svg>
           </button>
-          <button class="btn-icon" title="삭제" onclick={() => deletePersona(idx)}>
+          <button class="btn-icon" title="삭제" onclick={() => confirmDeleteIdx = idx}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
               <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
             </svg>
           </button>
         </div>
+        {#if confirmDeleteIdx === idx}
+          <div style="padding: 8px; background: var(--bg3); border-radius: var(--radius-sm); margin-top: 4px;">
+            <p style="font-size: 12px; color: var(--fg2); margin-bottom: 6px;">정말 삭제하시겠습니까?</p>
+            <div style="display: flex; gap: 6px;">
+              <button class="btn btn-sm btn-danger" onclick={() => { deletePersona(confirmDeleteIdx); confirmDeleteIdx = null; }}>삭제</button>
+              <button class="btn btn-sm btn-secondary" onclick={() => confirmDeleteIdx = null}>취소</button>
+            </div>
+          </div>
+        {/if}
       </li>
     {/each}
   </ul>

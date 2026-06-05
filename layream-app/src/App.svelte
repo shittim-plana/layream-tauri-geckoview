@@ -159,7 +159,7 @@
 </div>
 
 {#if oauthMessage}
-<div style="padding: 8px 16px; background: var(--accent); color: #fff; font-size: 13px; text-align: center;">
+<div role="status" aria-live="polite" style="padding: 8px 16px; background: var(--accent); color: #fff; font-size: 13px; text-align: center;">
   {oauthMessage}
 </div>
 {/if}
@@ -202,8 +202,10 @@
 <nav class="nav-bar">
   {#each tabs as tab}
     <button
+      type="button"
       class="nav-item"
       class:active={activeTab === tab.id}
+      aria-current={activeTab === tab.id ? "page" : undefined}
       onclick={() => (activeTab = tab.id)}
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">

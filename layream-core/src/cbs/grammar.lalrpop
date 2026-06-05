@@ -1,0 +1,58 @@
+//! LALRPOP grammar for the CBS math sub-language (`{{? ... }}` and `{{calc::...}}`).
+//!
+//! Precedence (low → high): `+ -`, then `* / %`, then `^` (right-associative),
+//! then unary `-`. Unary binds *tighter* than `^` so that `-2^2 == 4`, matching
+//! the legacy tokenizer which folded a leading sign into the numeric literal.
+
+use crate::cbs::ast::{MathExpr, MathToken};
+
+grammar;
+
+extern {
+    type Location = usize;
+    type Error = ();
+
+    enum MathToken {
+        "num" => MathToken::Num(<f64>),
+        "+" => MathToken::Plus,
+        "-" => MathToken::Minus,
+        "*" => MathToken::Star,
+        "/" => MathToken::Slash,
+        "%" => MathToken::Percent,
+        "^" => MathToken::Caret,
+        "(" => MathToken::LParen,
+        ")" => MathToken::RParen,
+    }
+}
+
+pub Math: MathExpr = <AddExpr>;
+
+AddExpr: MathExpr = {
+    <l:AddExpr> "+" <r:MulExpr> => MathExpr::bin('+', l, r),
+    <l:AddExpr> "-" <r:MulExpr> => MathExpr::bin('-', l, r),
+    MulExpr,
+};
+
+MulExpr: MathExpr = {
+    <l:MulExpr> "*" <r:PowExpr> => MathExpr::bin('*', l, r),
+    <l:MulExpr> "/" <r:PowExpr> => MathExpr::bin('/', l, r),
+    <l:MulExpr> "%" <r:PowExpr> => MathExpr::bin('%', l, r),
+    PowExpr,
+};
+
+// Right-associative: `2^3^2 == 2^(3^2)`. Base is a UnaryExpr so a leading
+// sign on the base binds tighter than the exponentiation.
+PowExpr: MathExpr = {
+    <b:UnaryExpr> "^" <e:PowExpr> => MathExpr::bin('^', b, e),
+    UnaryExpr,
+};
+
+UnaryExpr: MathExpr = {
+    "-" <e:UnaryExpr> => MathExpr::neg(e),
+    AtomExpr,
+};
+
+AtomExpr: MathExpr = {
+    <n:"num"> => MathExpr::Num(n),
+    "(" <AddExpr> ")",
+};

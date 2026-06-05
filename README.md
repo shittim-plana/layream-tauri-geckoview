@@ -91,6 +91,16 @@ layream-core/       Shared Rust library (18 modules, 200 tests)
     hypa.rs           HyPA v3 memory engine
 
 layream-app/        Tauri 2.0 app
+  src-tauri/src/
+    commands_auth.rs    OAuth (Vertex, GCA)
+    commands_chat.rs    Chat + embedding + model list + logs
+    commands_library.rs Library CRUD
+    commands_workspace.rs Workspace CRUD
+    commands_settings.rs Settings/session/persona
+    commands_cbs.rs     CBS evaluate/highlight
+    commands_platform.rs Android (browser, permission, notification)
+    commands_hypa.rs    HyPA (summarize, search, pin, invalidate)
+    persistence.rs      Data persistence
   src/views/          ChatView, PresetView, CharacterView, PersonaView,
                       SettingsView, AutopilotView, HypaView, LibraryView,
                       ModuleEditView, TestView

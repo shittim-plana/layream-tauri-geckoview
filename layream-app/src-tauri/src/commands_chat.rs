@@ -8,10 +8,12 @@ use layream_core::vertex_api::{
 use layream_core::voyage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager, State};
 
 use crate::commands_auth::{AuthState, ensure_gca_token, ensure_vertex_token, load_gca_project};
+use crate::persistence;
 
 /// A single chat message sent from the frontend to the chat API commands.
 /// The frontend maps "char" → "model" before sending, so `role` is one of
@@ -43,13 +45,29 @@ impl Default for StreamBufferState {
     }
 }
 
+/// In-memory request-log buffer plus an optional file sink (REFACTOR_HYPA §6).
+///
+/// `logs` remains the authoritative source for the Logs UI and keeps its
+/// MAX_LOGS cap — persistence is purely additive (§1.1). When `persist` is
+/// true, each entry is also appended to a JSONL file under `data_dir`.
+///
+/// `persist` defaults to false: the prior behavior (volatile, in-memory only)
+/// is preserved unless the user explicitly opts in (§1.4). `data_dir` is
+/// resolved once in `setup` (the app handle isn't available at `Default`
+/// construction time) and is `None` until then.
 pub struct RequestLogState {
     pub logs: Mutex<Vec<Value>>,
+    pub persist: Mutex<bool>,
+    pub data_dir: Mutex<Option<PathBuf>>,
 }
 
 impl Default for RequestLogState {
     fn default() -> Self {
-        Self { logs: Mutex::new(Vec::new()) }
+        Self {
+            logs: Mutex::new(Vec::new()),
+            persist: Mutex::new(false),
+            data_dir: Mutex::new(None),
+        }
     }
 }
 
@@ -119,20 +137,41 @@ fn log_api_call(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
+    let entry = serde_json::json!({
+        "timestamp": timestamp,
+        "provider": provider,
+        "model": model,
+        "status": status,
+        "duration_ms": duration_ms,
+        "request_preview": request_preview,
+        "response_preview": response_preview,
+        "estimated_tokens": estimated_tokens,
+    });
+
+    // In-memory ring buffer (authoritative for the Logs UI, capped at MAX_LOGS).
+    // A poisoned lock is best-effort-skipped as before: a logging failure must
+    // not break the chat call that produced the log.
     if let Ok(mut logs) = log_state.logs.lock() {
-        logs.push(serde_json::json!({
-            "timestamp": timestamp,
-            "provider": provider,
-            "model": model,
-            "status": status,
-            "duration_ms": duration_ms,
-            "request_preview": request_preview,
-            "response_preview": response_preview,
-            "estimated_tokens": estimated_tokens,
-        }));
+        logs.push(entry.clone());
         if logs.len() > MAX_LOGS {
             let excess = logs.len() - MAX_LOGS;
             logs.drain(..excess);
+        }
+    }
+
+    // Optional file sink. Only when the user opted in and the data dir has been
+    // resolved (set in setup). An append failure is logged, not swallowed
+    // (§5.1), and never propagated into the chat result — persistence is a
+    // side concern, not part of the call's contract.
+    let should_persist = log_state.persist.lock().map(|g| *g).unwrap_or(false);
+    if should_persist {
+        let dir = log_state.data_dir.lock().ok().and_then(|g| g.clone());
+        if let Some(dir) = dir {
+            if let Err(e) = persistence::append_log(&dir, &entry) {
+                log::warn!("failed to append request log to file: {e}");
+            }
+        } else {
+            log::warn!("request log persistence enabled but data dir is not resolved yet");
         }
     }
 }
@@ -395,13 +434,58 @@ pub async fn vertex_list_models(
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn get_request_logs(state: State<'_, RequestLogState>) -> Result<Vec<Value>, String> {
+    // When persisting, the file is the durable record across restarts; the
+    // in-memory buffer only holds the current session (capped at MAX_LOGS).
+    // Returning the file contents surfaces the full opted-in history. When not
+    // persisting, return the in-memory buffer exactly as before (§1.1).
+    let persisting = *state.persist.lock().map_err(|e| format!("lock poisoned: {e}"))?;
+    if persisting {
+        if let Some(dir) = state.data_dir.lock().map_err(|e| format!("lock poisoned: {e}"))?.clone() {
+            return persistence::read_logs(&dir);
+        }
+    }
     Ok(state.logs.lock().map_err(|e| format!("lock poisoned: {e}"))?.clone())
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn clear_request_logs(state: State<'_, RequestLogState>) -> Result<(), String> {
+    // Clear both sinks so a Clear from the UI is total regardless of which one
+    // get_request_logs is currently reading. The file is cleared even when
+    // persistence is off, so a stale file from a prior session is not orphaned.
     state.logs.lock().map_err(|e| format!("lock poisoned: {e}"))?.clear();
+    if let Some(dir) = state.data_dir.lock().map_err(|e| format!("lock poisoned: {e}"))?.clone() {
+        persistence::clear_logs(&dir)?;
+    }
     Ok(())
+}
+
+/// Returns whether request-log file persistence is currently enabled.
+#[tauri::command(rename_all = "snake_case")]
+pub fn get_log_persistence(state: State<'_, RequestLogState>) -> Result<bool, String> {
+    Ok(*state.persist.lock().map_err(|e| format!("lock poisoned: {e}"))?)
+}
+
+/// Enables or disables request-log file persistence and persists the choice to
+/// settings.json so it survives a restart. Errors propagate (§5.1).
+#[tauri::command(rename_all = "snake_case")]
+pub fn set_log_persistence(
+    enabled: bool,
+    state: State<'_, RequestLogState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    *state.persist.lock().map_err(|e| format!("lock poisoned: {e}"))? = enabled;
+
+    // Persist the toggle into settings.json under "logPersistence" so the next
+    // launch restores it (loaded in setup). Merge into the existing settings
+    // object rather than overwriting, to preserve every other key.
+    let data_dir = persistence::get_data_dir(&app)?;
+    let mut settings = persistence::load_settings(&data_dir)?;
+    if let Some(obj) = settings.as_object_mut() {
+        obj.insert("logPersistence".to_string(), Value::Bool(enabled));
+    } else {
+        settings = serde_json::json!({ "logPersistence": enabled });
+    }
+    persistence::save_settings(&data_dir, &settings)
 }
 
 #[tauri::command(rename_all = "snake_case")]

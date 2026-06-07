@@ -17,17 +17,44 @@
   let selectedLog = $state(null);
   let logsLoading = $state(false);
   let logsError = $state("");
+  let logPersist = $state(false);
 
   async function loadLogs() {
     logsLoading = true;
     logsError = "";
     try {
-      requestLogs = await invoke("get_request_logs") || [];
+      // Load the persistence toggle alongside the logs so the checkbox reflects
+      // the backend's restored setting when the tab opens.
+      const [persistResult, logsResult] = await Promise.allSettled([
+        invoke("get_log_persistence"),
+        invoke("get_request_logs"),
+      ]);
+      if (persistResult.status === "fulfilled") {
+        logPersist = persistResult.value === true;
+      }
+      if (logsResult.status === "fulfilled") {
+        requestLogs = logsResult.value || [];
+      } else {
+        throw logsResult.reason;
+      }
     } catch (e) {
       console.error("Failed to load logs:", e);
       logsError = "로그를 불러오지 못했습니다: " + e;
     } finally {
       logsLoading = false;
+    }
+  }
+
+  async function toggleLogPersist(enabled) {
+    try {
+      await invoke("set_log_persistence", { enabled });
+      logPersist = enabled;
+      // Re-read so the list switches between the in-memory buffer and the
+      // persisted file according to the new setting.
+      await loadLogs();
+    } catch (e) {
+      console.error("Failed to set log persistence:", e);
+      logsError = "로그 파일 저장 설정을 바꾸지 못했습니다: " + e;
     }
   }
 
@@ -131,9 +158,19 @@
     <div class="card">
       <div class="card-header">
         <span class="card-title">Request/Response Logs ({requestLogs.length})</span>
-        {#if requestLogs.length > 0}
-          <button class="btn btn-sm btn-danger" onclick={clearLogs}>Clear</button>
-        {/if}
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg2); cursor: pointer;">
+            <input
+              type="checkbox"
+              checked={logPersist}
+              onchange={(e) => toggleLogPersist(e.currentTarget.checked)}
+            />
+            로그 파일 저장
+          </label>
+          {#if requestLogs.length > 0}
+            <button class="btn btn-sm btn-danger" onclick={clearLogs}>Clear</button>
+          {/if}
+        </div>
       </div>
       {#if logsError}
         <div class="status-row" style="border-color: var(--red); color: var(--red);">{logsError}</div>

@@ -186,6 +186,77 @@ pub fn get_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Request log persistence (REFACTOR_HYPA §6). The in-memory RequestLogState
+// ring buffer (capped at MAX_LOGS) stays authoritative for the Logs UI; this
+// file is an optional, append-only JSONL sink so logs survive a restart when
+// the user opts in. One JSON object per line: appended atomically per line via
+// a single buffered write under an O_APPEND handle (no read-modify-write, so
+// no tmp+rename needed and concurrent appends don't tear each other).
+// ──────────────────────────────────────────────────────────────────────────
+
+const LOG_FILE: &str = "request_logs.jsonl";
+
+/// Resolves the request-log file path under the app data dir.
+pub fn log_file_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(LOG_FILE)
+}
+
+/// Appends one log entry as a JSONL line. Serializes the entry, then opens the
+/// file in append mode and writes the line + newline. The handle is dropped at
+/// the end of the function (RAII, §5.2), flushing on drop. Errors propagate to
+/// the caller (§5.1) — the caller decides whether a logging failure is fatal.
+pub fn append_log(data_dir: &Path, entry: &Value) -> Result<(), String> {
+    use std::io::Write;
+
+    fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+    // serde_json::to_string never emits a literal newline for a single Value,
+    // so one entry maps to exactly one line.
+    let line = serde_json::to_string(entry).map_err(|e| e.to_string())?;
+
+    let path = log_file_path(data_dir);
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
+    file.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+    file.write_all(b"\n").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Reads all persisted log entries. Skips lines that fail to parse rather than
+/// aborting the whole read — one corrupt line (e.g. a torn final write from a
+/// crash) should not hide every other entry (same resilience as library_list).
+/// Returns an empty Vec if the file does not exist yet.
+pub fn read_logs(data_dir: &Path) -> Result<Vec<Value>, String> {
+    let path = log_file_path(data_dir);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut entries = Vec::new();
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<Value>(line) {
+            Ok(v) => entries.push(v),
+            Err(_) => continue,
+        }
+    }
+    Ok(entries)
+}
+
+/// Deletes the persisted log file. A missing file is success (idempotent clear).
+pub fn clear_logs(data_dir: &Path) -> Result<(), String> {
+    let path = log_file_path(data_dir);
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Library: multi-slot storage for presets / characters / modules.
 // Each item is one JSON file `{ id, name, created_at, data }` under
 // `$APP_DATA/library/<kind>/<id>.json`. The wrapper isolates metadata from

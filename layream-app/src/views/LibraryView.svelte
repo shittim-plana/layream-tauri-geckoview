@@ -266,13 +266,13 @@
 {:else}
 <div>
   {#if error}
-    <div class="card" role="alert" style="border-color: var(--red); color: var(--red);">
+    <div class="card" style="border-color: var(--red); color: var(--red);">
       <div class="card-body">{error}</div>
     </div>
   {/if}
 
   {#if status}
-    <div class="card" role="status" aria-live="polite" style="border-color: var(--accent); color: var(--accent);">
+    <div class="card" style="border-color: var(--accent); color: var(--accent);">
       <div class="card-body">{status}</div>
     </div>
   {/if}
@@ -385,12 +385,12 @@
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Confirm delete"
+     
       style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;"
     >
       <button
         type="button"
-        aria-label="Cancel"
+       
         onclick={() => confirmDelete = null}
         style="position: absolute; inset: 0; background: transparent; border: 0; cursor: default; padding: 0;"
       ></button>

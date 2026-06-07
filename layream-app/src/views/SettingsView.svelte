@@ -569,11 +569,11 @@
   <div class="card">
     <div class="card-header">
       <span class="card-title">Vertex AI OAuth</span>
-      <span class="status-dot {statusClass(vertexStatus)}" title={statusText(vertexStatus)} role="img" aria-label="Vertex 연결 상태: {statusText(vertexStatus)}"></span>
+      <span class="status-dot {statusClass(vertexStatus)}" title={statusText(vertexStatus)}></span>
       {#if vertexConnecting}<span class="status-dot" style="background: var(--blue);"></span>{/if}
     </div>
     <div class="card-body">
-      <p role="status" aria-live="polite" style="font-size: 12px; color: var(--fg2); margin-bottom: 12px;">{statusText(vertexStatus)}</p>
+      <p style="font-size: 12px; color: var(--fg2); margin-bottom: 12px;">{statusText(vertexStatus)}</p>
 
       {#if vertexStatus?.connected && !vertexStatus?.expired}
         <div style="display: flex; gap: 6px; margin-bottom: 12px;">
@@ -667,11 +667,11 @@
   <div class="card">
     <div class="card-header">
       <span class="card-title">Gemini Code Assist</span>
-      <span class="status-dot {statusClass(gcaStatus)}" title={statusText(gcaStatus)} role="img" aria-label="GCA 연결 상태: {statusText(gcaStatus)}"></span>
+      <span class="status-dot {statusClass(gcaStatus)}" title={statusText(gcaStatus)}></span>
       {#if gcaConnecting}<span class="status-dot" style="background: var(--blue);"></span>{/if}
     </div>
     <div class="card-body">
-      <p role="status" aria-live="polite" style="font-size: 12px; color: var(--fg2); margin-bottom: 12px;">{statusText(gcaStatus)}</p>
+      <p style="font-size: 12px; color: var(--fg2); margin-bottom: 12px;">{statusText(gcaStatus)}</p>
 
       {#if gcaStatus?.connected && !gcaStatus?.expired}
         {#if gcaUserEmail}
@@ -943,7 +943,7 @@
         <div style="padding: 14px; border-bottom: 1px solid var(--bg4);">
           <span style="font-size: 14px; font-weight: 600;">브라우저 선택</span>
         </div>
-        <div style="max-height: 300px; overflow-y: auto; overscroll-behavior: contain;">
+        <div style="max-height: 300px; overflow-y: auto;">
           {#each browserList as b}
             <button
               style="width: 100%; padding: 14px; border: none; background: none; color: var(--fg); font-size: 14px; text-align: left; border-bottom: 1px solid var(--bg4); cursor: pointer;"

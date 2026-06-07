@@ -246,7 +246,7 @@
     </div>
   </div>
   <div class="card-body">
-    <div class="status-row" role="status" aria-live="polite">
+    <div class="status-row">
       <span style="font-size: 13px; color: var(--fg);">Autopilot 상태: <strong>{statusMessage}</strong></span>
     </div>
     <div class="field">

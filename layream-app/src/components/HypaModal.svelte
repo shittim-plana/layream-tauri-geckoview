@@ -113,7 +113,7 @@
     onkeydown={handleBackdropKey}
     role="dialog"
     aria-modal="true"
-    aria-label="Summary details"
+   
     tabindex="-1"
   >
     <div class="hypa-modal-card" bind:this={cardRef}>

@@ -159,7 +159,7 @@
 </div>
 
 {#if oauthMessage}
-<div role="status" aria-live="polite" style="padding: 8px 16px; background: var(--accent); color: #fff; font-size: 13px; text-align: center;">
+<div style="padding: 8px 16px; background: var(--accent); color: #fff; font-size: 13px; text-align: center;">
   {oauthMessage}
 </div>
 {/if}
@@ -169,10 +169,10 @@
   {#each toasts as toast (toast.id)}
     <div
       class="toast toast-{toast.level}"
-      role="alert"
+     
     >
       <span class="toast-message">{toast.message}</span>
-      <button class="toast-dismiss" onclick={() => dismissToast(toast.id)} aria-label="닫기">&times;</button>
+      <button class="toast-dismiss" onclick={() => dismissToast(toast.id)}>&times;</button>
     </div>
   {/each}
 </div>
@@ -205,7 +205,7 @@
       type="button"
       class="nav-item"
       class:active={activeTab === tab.id}
-      aria-current={activeTab === tab.id ? "page" : undefined}
+     
       onclick={() => (activeTab = tab.id)}
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">

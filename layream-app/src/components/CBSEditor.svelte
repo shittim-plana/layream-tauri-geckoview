@@ -22,6 +22,10 @@
     }
     if (token.kind === "macro") return "cbs-fn";
     if (token.kind === "variable") return "cbs-var";
+    // Escape-region literals: plain styling, never CBS colors.
+    if (token.kind === "escape") return "cbs-escape";
+    // Markdown kinds arrive as "md-heading", "md-bold", … — map 1:1 to CSS classes.
+    if (token.kind.startsWith("md-")) return "cbs-" + token.kind;
     return "";
   }
 

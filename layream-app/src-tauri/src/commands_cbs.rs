@@ -28,12 +28,7 @@ pub fn highlight_cbs(input: String) -> Value {
             serde_json::json!({
                 "start": t.start,
                 "end": t.end,
-                "kind": match t.kind {
-                    highlighter::TokenKind::Control => "control",
-                    highlighter::TokenKind::Macro => "macro",
-                    highlighter::TokenKind::Variable => "variable",
-                    highlighter::TokenKind::Bracket => "bracket",
-                },
+                "kind": t.kind.as_str(),
                 "depth": t.depth,
                 "alt": t.alt,
             })

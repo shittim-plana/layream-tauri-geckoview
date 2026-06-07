@@ -2,6 +2,7 @@ pub mod ast;
 pub mod eval;
 pub mod highlighter;
 pub mod parser;
+pub mod tokenizer;
 
 mod grammar {
     use lalrpop_util::lalrpop_mod;

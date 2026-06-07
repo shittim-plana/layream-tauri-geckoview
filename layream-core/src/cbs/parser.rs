@@ -1,13 +1,15 @@
 //! CBS template parsing and the public evaluation entry point.
 //!
-//! Parsing produces a shallow [`Node`] tree: it locates `{{ }}` tag boundaries
-//! (balanced-brace matching) and name-matched `{{#name}}…{{/name}}` blocks, but
-//! leaves tag arguments and block bodies as raw strings. Evaluation
-//! ([`crate::cbs::eval`]) re-evaluates those raw strings, preserving CBS's
-//! string-rewriting macro semantics. The math sub-language is parsed by the
-//! LALRPOP grammar in `grammar.lalrpop`.
+//! Parsing produces a shallow [`Node`] tree. The `{{ }}` boundary scan itself
+//! lives in [`crate::cbs::tokenizer`] — the single source of truth shared with
+//! the highlighter (§4.1: one fact, one site). [`parse`] is now a thin adapter
+//! from [`tokenizer::Segment`] to [`Node`]: tag arguments and block bodies stay
+//! raw strings, re-evaluated during evaluation to preserve CBS's string-rewriting
+//! macro semantics. The math sub-language is parsed by the LALRPOP grammar in
+//! `grammar.lalrpop`.
 
 use crate::cbs::ast::Node;
+use crate::cbs::tokenizer::{self, Segment};
 
 pub use crate::cbs::eval::{CbsContext, CbsMessage};
 
@@ -28,131 +30,36 @@ pub(crate) fn evaluate_depth(input: &str, ctx: &mut CbsContext, depth: usize) ->
     crate::cbs::eval::eval_nodes(&nodes, ctx, depth)
 }
 
-/// Parse a template into its shallow node structure.
+/// Parse a template into its shallow node structure by adapting the shared
+/// tokenizer's [`Segment`] stream into [`Node`]s.
+///
+/// - [`Segment::Text`] → [`Node::Text`] (verbatim; includes escape-region
+///   interiors and unclosed-delimiter fallbacks).
+/// - [`Segment::Comment`] → dropped (comments produce no output).
+/// - [`Segment::Tag`] → [`Node::Tag`] with the trimmed content.
+/// - [`Segment::Block`] for `escape` → [`Node::Text`] of the verbatim body: the
+///   escape interior is literal and must never be re-evaluated as CBS. This is
+///   the single point where escape's literal contract is realized for eval.
+/// - any other [`Segment::Block`] → [`Node::Block`] for [`crate::cbs::eval`].
 fn parse(input: &str) -> Vec<Node> {
-    let mut nodes = Vec::new();
-    let mut text = String::new();
-    let mut pos = 0;
-    let bytes = input.as_bytes();
-
-    while pos < bytes.len() {
-        if pos + 1 < bytes.len() && bytes[pos] == b'{' && bytes[pos + 1] == b'{' {
-            if let Some(end) = find_closing(input, pos + 2) {
-                let content = input[pos + 2..end].trim();
-
-                if !text.is_empty() {
-                    nodes.push(Node::Text(std::mem::take(&mut text)));
-                }
-
-                if content.starts_with('#') || content.starts_with(":each") {
-                    let block_name = extract_block_name(content);
-                    let after_tag = end + 2;
-                    if let Some((body, close_end)) = find_block_end(input, after_tag, &block_name) {
-                        nodes.push(Node::Block {
-                            header: content.to_string(),
-                            body: body.to_string(),
-                        });
-                        pos = close_end;
-                        continue;
-                    }
-                }
-
-                nodes.push(Node::Tag(content.to_string()));
-                pos = end + 2;
-                continue;
-            }
-        }
-        let ch_len = utf8_char_len(bytes[pos]);
-        text.push_str(&input[pos..pos + ch_len]);
-        pos += ch_len;
-    }
-
-    if !text.is_empty() {
-        nodes.push(Node::Text(text));
-    }
-    nodes
+    tokenizer::scan(input)
+        .into_iter()
+        .filter_map(segment_to_node)
+        .collect()
 }
 
-fn extract_block_name(tag: &str) -> String {
-    let tag_lower = tag.to_lowercase();
-    let name_part = if tag_lower.starts_with(":each") || tag_lower.starts_with("#each") {
-        "each"
-    } else if let Some(rest) = tag_lower.strip_prefix('#') {
-        if let Some(idx) = rest.find(|c: char| c == ' ' || c == ':') {
-            &rest[..idx]
-        } else {
-            rest
-        }
-    } else {
-        return String::new();
-    };
-    name_part.to_string()
-}
-
-fn find_block_end<'a>(input: &'a str, start: usize, block_name: &str) -> Option<(&'a str, usize)> {
-    let close_tag = format!("/{}", block_name);
-    let open_prefix = format!("#{}", block_name);
-    let open_prefix_colon = format!(":{}", block_name);
-    let mut nest = 1u32;
-    let mut i = start;
-    let bytes = input.as_bytes();
-
-    while i < bytes.len() {
-        if i + 1 < bytes.len() && bytes[i] == b'{' && bytes[i + 1] == b'{' {
-            if let Some(end) = find_closing(input, i + 2) {
-                let inner = input[i + 2..end].trim().to_lowercase();
-                if inner.starts_with(&open_prefix) || inner.starts_with(&open_prefix_colon) {
-                    nest += 1;
-                } else if inner.starts_with(&close_tag) {
-                    nest -= 1;
-                    if nest == 0 {
-                        let body = &input[start..i];
-                        return Some((body, end + 2));
-                    }
-                }
-                i = end + 2;
-                continue;
+fn segment_to_node(seg: Segment) -> Option<Node> {
+    match seg {
+        Segment::Text(t) => Some(Node::Text(t)),
+        Segment::Comment(_) => None,
+        Segment::Tag { content, .. } => Some(Node::Tag(content)),
+        Segment::Block { name, body, header } => {
+            if name == "escape" {
+                Some(Node::Text(body))
+            } else {
+                Some(Node::Block { header, body })
             }
         }
-        i += 1;
-    }
-    None
-}
-
-fn find_closing(input: &str, start: usize) -> Option<usize> {
-    let bytes = input.as_bytes();
-    let mut depth = 1u32;
-    let mut i = start;
-    while i < bytes.len() {
-        if i + 1 < bytes.len() {
-            if bytes[i] == b'{' && bytes[i + 1] == b'{' {
-                depth += 1;
-                i += 2;
-                continue;
-            }
-            if bytes[i] == b'}' && bytes[i + 1] == b'}' {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(i);
-                }
-                i += 2;
-                continue;
-            }
-        }
-        i += 1;
-    }
-    None
-}
-
-fn utf8_char_len(first_byte: u8) -> usize {
-    if first_byte < 0x80 {
-        1
-    } else if first_byte < 0xE0 {
-        2
-    } else if first_byte < 0xF0 {
-        3
-    } else {
-        4
     }
 }
 

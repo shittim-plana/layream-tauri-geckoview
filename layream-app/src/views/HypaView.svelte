@@ -147,7 +147,7 @@
   async function loadHypa() {
     try {
       // hypa_load_all returns the raw hypa.json `{ summaries: [...] }`.
-      // Field shape matches RisuAI HypaV3 (chatMemos/isImportant preserved
+      // Field shape uses the external wire keys (chatMemos/isImportant preserved
       // by serde rename in commands_hypa.rs Summary struct).
       const data = await invoke("hypa_load_all");
       hypaSummaries = data?.summaries || [];
@@ -182,9 +182,9 @@
       });
       const data = JSON.parse(text);
       // Try extraction in order of specificity:
-      // 1. { summaries: [...] } — Layream export / RisuAI SerializableHypaV3Data
+      // 1. { summaries: [...] } — Layream export / external serialized data
       // 2. bare array [...]
-      // 3. { hypaV3Data: { summaries: [...] } } — RisuAI chat export wrapper
+      // 3. { hypaV3Data: { summaries: [...] } } — external chat export wrapper
       // Try summaries extraction
       const items = data?.summaries
         ?? (Array.isArray(data) ? data : null)
@@ -193,7 +193,7 @@
         ?? data?.hypaV3Data?.memory?.summaries
         ?? data?.data?.summaries
         ?? null;
-      // Try HyPA settings preset import ({ type: "risu", data: { settings } })
+      // Try HyPA settings preset import (external preset envelope: { data: { settings } })
       const settingsImport = data?.data?.settings || data?.settings || null;
       if (items && Array.isArray(items)) {
         hypaSummaries = items;
@@ -239,12 +239,32 @@
     modalIndex = -1;
   }
 
+  // Toggle isImportant on one summary via the atomic backend command rather
+  // than a full saveHypa (hypa_save_all) replace. hypa_toggle_important does
+  // load→mutate-one-field→save under the HypaState lock, so a concurrent
+  // pin/invalidate is not clobbered by a stale whole-array snapshot. On
+  // backend error we revert the optimistic local update so the UI stays
+  // consistent with disk (no silent divergence).
+  async function setImportant(index, value) {
+    if (index < 0 || index >= hypaSummaries.length) return;
+    const prev = hypaSummaries[index].isImportant;
+    const next = { ...hypaSummaries[index], isImportant: value };
+    hypaSummaries = [...hypaSummaries.slice(0, index), next, ...hypaSummaries.slice(index + 1)];
+    if (modalIndex === index) modalSummary = next;
+    try {
+      await invoke("hypa_toggle_important", { index, is_important: value });
+    } catch (e) {
+      console.error("hypa_toggle_important failed:", e);
+      flashError(e, "중요 표시 토글");
+      const reverted = { ...hypaSummaries[index], isImportant: prev };
+      hypaSummaries = [...hypaSummaries.slice(0, index), reverted, ...hypaSummaries.slice(index + 1)];
+      if (modalIndex === index) modalSummary = reverted;
+    }
+  }
+
   async function toggleImportantOnModal() {
     if (!modalSummary || modalIndex < 0 || modalIndex >= hypaSummaries.length) return;
-    const next = { ...hypaSummaries[modalIndex], isImportant: !hypaSummaries[modalIndex].isImportant };
-    hypaSummaries = [...hypaSummaries.slice(0, modalIndex), next, ...hypaSummaries.slice(modalIndex + 1)];
-    modalSummary = next;
-    await saveHypa();
+    await setImportant(modalIndex, !hypaSummaries[modalIndex].isImportant);
   }
 
   async function deleteSummary(index) {
@@ -434,10 +454,10 @@
         <button class="btn btn-sm btn-danger" onclick={clearHypa}>Clear All</button>
       </div>
       {#if hypaImportStatus}
-        <p role="status" aria-live="polite" style="font-size: 11px; color: var(--orange); margin-top: 8px;">{hypaImportStatus}</p>
+        <p style="font-size: 11px; color: var(--orange); margin-top: 8px;">{hypaImportStatus}</p>
       {/if}
       {#if hypaActionStatus}
-        <p role="status" aria-live="polite" style="font-size: 11px; color: var(--fg2); margin-top: 4px;">{hypaActionStatus}</p>
+        <p style="font-size: 11px; color: var(--fg2); margin-top: 4px;">{hypaActionStatus}</p>
       {/if}
     {/if}
   </div>
@@ -477,11 +497,7 @@
                     <input
                       type="checkbox"
                       checked={!!summary.isImportant}
-                      onchange={async () => {
-                        const next = { ...summary, isImportant: !summary.isImportant };
-                        hypaSummaries = [...hypaSummaries.slice(0, idx), next, ...hypaSummaries.slice(idx + 1)];
-                        await saveHypa();
-                      }}
+                      onchange={(e) => setImportant(idx, e.currentTarget.checked)}
                     />
                     <span class="toggle-track"></span>
                   </label>

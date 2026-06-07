@@ -16,9 +16,7 @@ PROJECT.md
 *.keystore
 session-recovery.md
 STATUS.md
-독립-로드맵-2026.md
+REFACTOR_HYPA.md
+REFACTOR_CBS.md
 testdata/
 layream-core/tests/interop.rs
-
-BENCHMARK_RESULTS.md
-HYPA_ANALYSIS.md

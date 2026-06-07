@@ -1,13 +1,15 @@
 //! HyPA backend — hierarchical prompt augmentation commands.
 //!
-//! Schema is RisuAI HypaV3 compatible (`chatMemos`, `isImportant` fields preserved
-//! via serde rename) with new-arona-bot extensions for `pinBoost` and `invalidated`.
+//! Wire format uses camelCase keys (`chatMemos`, `isImportant` preserved via
+//! serde rename) for interoperability with external preset/memory exports, plus
+//! Layream extensions for `pinBoost` and `invalidated`.
 //!
 //! Embeddings are stored as `Vec<f64>` to match the JSON wire format (JSON numbers
 //! decode to f64 by default) and to compose with `layream_core::voyage::cosine_similarity`
 //! without precision conversion. This is intentional — see §3-A (no demote/promote).
 
 use layream_core::gca::{self, GCA_OAUTH_CLIENT_ID};
+use layream_core::hypa::{self, HypaData, HypaSettings, Summary};
 use layream_core::mistral;
 use layream_core::vertex_api::{
     self, Content, GenerateRequest, GenerationConfig, Part, SafetySetting,
@@ -16,7 +18,6 @@ use layream_core::vertex_auth::{
     self, OAuthCredentials, LAYREAM_REDIRECT_URI, VERTEX_CLIENT_ID,
 };
 use layream_core::voyage;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::State;
 use tokio::sync::Mutex;
@@ -52,8 +53,17 @@ impl Default for HypaState {
 // === Constants (§9-B: no magic numbers) ===
 
 /// Increment applied to `pinBoost` when a chat message is pinned/unpinned.
-/// Mirrors `PIN_BOOST_INCREMENT` in new-arona-bot pin-message route.
 const PIN_BOOST_INCREMENT: f64 = 0.5;
+
+/// The body-independent overhead of `layream_core::hypa::build_memory_block`'s
+/// wrapper. MUST mirror that function's `format!` string with an empty body —
+/// it produces `<Past Events Summary>\n{body}\n</Past Events Summary>`, so the
+/// fixed cost is the same string with `{body}` empty. `hypa_select_block`
+/// reserves this many tokens before budgeting summaries, so the wrapped block
+/// stays within the caller's token budget (REFACTOR_HYPA §선택동작세부). If the
+/// wrapper format in `build_memory_block` changes, update this string too —
+/// they are the one fact that must agree (§4.1).
+const MEMORY_BLOCK_WRAPPER: &str = "<Past Events Summary>\n\n</Past Events Summary>";
 
 /// Default safety settings — block none. Mirrors `commands.rs::build_safety_settings`.
 fn build_safety_settings() -> Vec<SafetySetting> {
@@ -72,46 +82,15 @@ fn build_safety_settings() -> Vec<SafetySetting> {
     .collect()
 }
 
-// === Schema (RisuAI HypaV3 compatible + new-arona-bot extensions) ===
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Summary {
-    pub text: String,
-
-    /// Chat message ids covered by this summary. Field name preserved for
-    /// RisuAI HypaV3 wire compatibility.
-    #[serde(rename = "chatMemos", default)]
-    pub chat_memos: Vec<String>,
-
-    /// Optional embedding vector used by `hypa_search`. f64 to match JSON
-    /// number decoding and `voyage::cosine_similarity`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub embedding: Option<Vec<f64>>,
-
-    /// Whether this summary should always be included regardless of similarity.
-    /// Field name preserved for RisuAI HypaV3 wire compatibility.
-    #[serde(rename = "isImportant", default)]
-    pub is_important: bool,
-
-    /// Score boost applied when any covered chat is pinned (new-arona-bot).
-    #[serde(rename = "pinBoost", default)]
-    pub pin_boost: f64,
-
-    /// True once a covered chat has been deleted (new-arona-bot).
-    #[serde(default)]
-    pub invalidated: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct HypaData {
-    #[serde(default)]
-    pub summaries: Vec<Summary>,
-
-    /// Future fields (display state, settings cache) live here without breaking
-    /// roundtrip compatibility — captured into `extra` and re-emitted unchanged.
-    #[serde(flatten)]
-    pub extra: serde_json::Map<String, Value>,
-}
+// === Schema ===
+//
+// `Summary` / `HypaData` / `HypaSettings` live in `layream_core::hypa` — the
+// single definition site (§4.1) shared by the core selection pipeline
+// (`select_memories`, `build_memory_block`) and this Tauri command layer. The
+// duplicate definitions that once lived here were deleted; `use` above is the
+// only binding. Wire format uses camelCase keys (`chatMemos` / `isImportant` /
+// `pinBoost`) for external interoperability, with the `embedding` /
+// `invalidated` extensions.
 
 // === Internal helpers ===
 
@@ -140,6 +119,27 @@ fn settings_str<'a>(settings: &'a Value, key: &str) -> Result<&'a str, String> {
 /// Extract an optional string field.
 fn settings_str_opt<'a>(settings: &'a Value, key: &str) -> Option<&'a str> {
     settings.get(key).and_then(|v| v.as_str())
+}
+
+/// Token estimate for budgeting. Mirrors the frontend `trimToContextWindow`
+/// idiom (`chars * 4` for the inverse) and `commands_chat.rs` logging
+/// (`len / 4`): ~4 chars per token. Stated explicitly here (§1.4) so the
+/// budget math in `select_memories` callers has one named convention.
+fn estimate_tokens(text: &str) -> usize {
+    text.len() / 4
+}
+
+/// Map a frontend HyPA settings JSON object onto `HypaSettings`.
+///
+/// `HypaSettings` is `#[serde(rename_all = "camelCase", default)]`, so this
+/// deserializes the external/Layream camelCase keys directly and fills any
+/// omitted key from `Default` — a preset that carries only a subset of ratios
+/// still maps cleanly (§1.1). Unknown keys in `settings` (provider/model/etc.)
+/// are ignored by serde. A malformed value (e.g. a string where a ratio is
+/// expected) surfaces as an error rather than a silent default (§5.1).
+fn hypa_settings_from_value(settings: &Value) -> Result<HypaSettings, String> {
+    serde_json::from_value(settings.clone())
+        .map_err(|e| format!("invalid HyPA settings: {}", e))
 }
 
 /// Refresh a token if expired, persist if rotated. Returns the valid token.
@@ -407,9 +407,9 @@ pub async fn hypa_summarize(
     let summary_prompt = settings_str(&settings, "summaryPrompt")?;
 
     // Build prompt: prepend system instruction as the first user-role content.
-    // This matches how RisuAI HypaV3 prompts the model with the conversation
-    // followed by an instruction. We use a single user message containing the
-    // instruction + serialized window (kept simple — §6-D).
+    // The model is prompted with the conversation followed by an instruction.
+    // We use a single user message containing the instruction + serialized
+    // window (kept simple — §6-D).
     let mut serialized = String::new();
     for m in &messages {
         let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("user");
@@ -448,7 +448,6 @@ pub async fn hypa_summarize(
 }
 
 /// Parse model output as either a JSON object with `summary` field or raw text.
-/// Mirrors `tryParseJsonObject` in new-arona-bot summarizer.ts.
 fn parse_summary_text(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -472,9 +471,25 @@ fn parse_summary_text(raw: &str) -> String {
     trimmed.to_string()
 }
 
-/// Cosine similarity search over stored summaries. Pin-boosted, invalidation-aware.
+/// Per-`top_k` token allowance used by the `hypa_search` top_k↔token_budget
+/// adapter. `select_memories` budgets in tokens, not item counts; this maps a
+/// caller's requested `top_k` onto a token budget large enough to admit roughly
+/// that many summaries. Stated explicitly (§1.4) — it is the single named
+/// conversion between the two units. Generous on purpose: a slightly larger
+/// budget lets `select_memories` rank freely, then the result is truncated back
+/// to `top_k` so the contract (`top_k` items, score-sorted) holds exactly.
+const SEARCH_TOKENS_PER_TOP_K: usize = 512;
+
+/// Similarity search over stored summaries, routed through the core 4-phase
+/// `select_memories` pipeline (important → pinned → recent → similar → random),
+/// then truncated to `top_k`.
 ///
-/// Returns top-K entries as `{ index, score, summary }` sorted by score desc.
+/// Adapter: `token_budget = top_k * SEARCH_TOKENS_PER_TOP_K`. `select_memories`
+/// is the selection authority (external wire compatible); this command no
+/// longer runs its own 1-phase cosine ranking. For the frontend contract the
+/// per-item `score` is recomputed as `cosine(query, embedding) + pin_boost`
+/// over the selected summaries — same formula the old 1-phase path returned, so
+/// `{ index, score, summary }` is preserved and the result stays score-sorted.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn hypa_search(
     query_embedding: Vec<f64>,
@@ -494,40 +509,111 @@ pub async fn hypa_search(
 
     let data = load_hypa_data(&app)?;
 
-    let mut scored: Vec<(usize, f64, &Summary)> = data
-        .summaries
+    // top_k → token_budget adapter (the only place the two units meet).
+    let token_budget = top_k.saturating_mul(SEARCH_TOKENS_PER_TOP_K);
+
+    // Single query → single-element query_embeddings with unit weight. The
+    // similar phase reads embeddings directly off each Summary; a summary whose
+    // embedding dimension mismatches the query simply contributes cosine 0.0
+    // here at score time (it can still be selected by another phase).
+    let selection = hypa::select_memories(
+        &data,
+        std::slice::from_ref(&query_embedding),
+        &[1.0],
+        token_budget,
+        estimate_tokens,
+        // hypa_search takes no settings arg (the search top_k is the only knob);
+        // default ratios drive the internal phase budgets.
+        &HypaSettings::default(),
+    );
+
+    // Recompute display scores over the selected summaries (contract: score
+    // desc). cosine is defined only when dimensions match — otherwise the
+    // similarity contribution is 0.0 (pin_boost still counts), mirroring the
+    // old path's skip-on-mismatch without dropping a summary the pipeline
+    // already chose.
+    let mut scored: Vec<(usize, f64)> = selection
+        .selected
         .iter()
-        .enumerate()
-        .filter(|(_, s)| !s.invalidated)
-        .filter_map(|(i, s)| {
-            let emb = s.embedding.as_ref()?;
-            if emb.len() != query_embedding.len() {
-                // §3-A: dimension mismatch is a fabrication risk — skip rather
-                // than silently zero-fill.
-                return None;
-            }
-            let cos = voyage::cosine_similarity(&query_embedding, emb);
-            let combined = cos + s.pin_boost;
-            Some((i, combined, s))
+        .map(|&i| {
+            let s = &data.summaries[i];
+            let cos = match s.embedding.as_ref() {
+                Some(emb) if emb.len() == query_embedding.len() => {
+                    voyage::cosine_similarity(&query_embedding, emb)
+                }
+                _ => 0.0,
+            };
+            (i, cos + s.pin_boost)
         })
         .collect();
 
-    // Sort by combined score desc.
     scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     scored.truncate(top_k);
 
     let result: Vec<Value> = scored
         .into_iter()
-        .map(|(i, score, s)| {
+        .map(|(i, score)| {
             serde_json::json!({
                 "index": i,
                 "score": score,
-                "summary": s,
+                "summary": data.summaries[i],
             })
         })
         .collect();
 
     Ok(Value::Array(result))
+}
+
+/// Build the `<Past Events Summary>` memory block via the core 4-phase
+/// `select_memories` pipeline. Replaces the assemblePrompt full-dump path.
+///
+/// Args:
+/// - `query_embeddings` / `query_weights`: conversation query vectors. EMPTY is
+///   valid — `select_memories` then skips the similar phase and still runs
+///   important / pinned / recent / random (D2 graceful degradation). Callers
+///   without an embedding (autopilot, non-chat) pass `[]`.
+/// - `token_budget`: caller-computed budget (`floor(maxContext * memoryTokensRatio)`
+///   minus wrapper cost). The frontend owns maxContext, so it is passed in.
+/// - `settings`: HyPA settings JSON (camelCase ratios) → `HypaSettings`.
+///
+/// Returns the block string (empty when nothing is selected).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn hypa_select_block(
+    query_embeddings: Vec<Vec<f64>>,
+    query_weights: Vec<f64>,
+    token_budget: usize,
+    settings: Value,
+    hypa_state: State<'_, HypaState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    // Read-only — lock acquired for read-after-write consistency only.
+    let _guard = hypa_state.lock.lock().await;
+
+    if token_budget == 0 {
+        return Ok(String::new());
+    }
+
+    let data = load_hypa_data(&app)?;
+    let hypa_settings = hypa_settings_from_value(&settings)?;
+
+    // Reserve the wrapper cost so the wrapped block fits the caller's budget:
+    // build_memory_block adds `<Past Events Summary>…</Past Events Summary>`
+    // after selection, which select_memories does not account for on its own.
+    // saturating_sub: a budget smaller than the wrapper yields 0 → nothing is
+    // selected → build_memory_block returns "" (no wrapper emitted), so we
+    // never overshoot.
+    let summary_budget = token_budget.saturating_sub(estimate_tokens(MEMORY_BLOCK_WRAPPER));
+
+    let selection = hypa::select_memories(
+        &data,
+        &query_embeddings,
+        &query_weights,
+        summary_budget,
+        estimate_tokens,
+        &hypa_settings,
+    );
+
+    Ok(hypa::build_memory_block(&data, &selection.selected))
 }
 
 /// Toggle pin on a chat message — adjusts `pinBoost` for every summary covering it.
@@ -551,8 +637,8 @@ pub async fn hypa_pin_message(
             continue;
         }
         if s.invalidated {
-            // Pinning an invalidated summary is a no-op (mirrors the SQL filter
-            // `WHERE invalidated = false` in new-arona-bot pin-message route).
+            // Pinning an invalidated summary is a no-op (invalidated summaries
+            // are excluded from selection).
             continue;
         }
         if is_pinned {
@@ -567,7 +653,46 @@ pub async fn hypa_pin_message(
     Ok(affected)
 }
 
-/// Mark every summary covering `chat_id` as invalidated. Mirrors new-arona-bot
+/// Set the `isImportant` flag on a single summary by index.
+///
+/// Atomic load → mutate-one-field → save under the `HypaState` lock — the same
+/// pattern as `hypa_pin_message`. This exists instead of routing the toggle
+/// through `hypa_save_all` because `hypa_save_all` writes a *whole-array*
+/// snapshot the frontend computed earlier; a concurrent `hypa_pin_message` /
+/// `hypa_invalidate_summary` (which mutate disk directly) would be clobbered by
+/// that stale snapshot (§1.1). A single-field update preserves the other
+/// summaries' on-disk state, including pins/invalidation set concurrently.
+///
+/// `is_important` (external-compat, always-include in Phase 1) is distinct from
+/// `pin_boost` (Layream message-pin, guaranteed budget) — this command touches
+/// only the former.
+///
+/// Returns the resulting flag value (echoes `is_important`) so the caller can
+/// confirm. Errors if `index` is out of range — silently ignoring a bad index
+/// would let the frontend believe a toggle landed when it did not (§5.1).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn hypa_toggle_important(
+    index: usize,
+    is_important: bool,
+    hypa_state: State<'_, HypaState>,
+    app: tauri::AppHandle,
+) -> Result<bool, String> {
+    // Critical section: load → mutate → save (see hypa_pin_message).
+    let _guard = hypa_state.lock.lock().await;
+
+    let mut data = load_hypa_data(&app)?;
+
+    let len = data.summaries.len();
+    let summary = data.summaries.get_mut(index).ok_or_else(|| {
+        format!("hypa_toggle_important: index {} out of range ({} summaries)", index, len)
+    })?;
+    summary.is_important = is_important;
+
+    save_hypa_data(&app, &data)?;
+    Ok(is_important)
+}
+
+/// Mark every summary covering `chat_id` as invalidated. Applied as a
 /// delete-message cascade.
 ///
 /// Soft-delete semantics: `chatMemos` is **not** modified — the audit trail
@@ -582,7 +707,9 @@ pub async fn hypa_pin_message(
 ///      durable record.
 ///
 /// Filtering of invalidated summaries happens at read time:
-///   - `hypa_search` skips them via `filter(|(_, s)| !s.invalidated)`.
+///   - `hypa_search` / `hypa_select_block` skip them because both route through
+///     `select_memories`, whose Phase 0 excludes every invalidated summary from
+///     all subsequent phases.
 ///   - `hypa_pin_message` skips them via the `if s.invalidated { continue; }`
 ///     guard, so pinning a deleted message is a no-op (the audit trail
 ///     `chatMemos` still matches `chat_id`, but the invalidated flag wins).
@@ -668,40 +795,10 @@ pub async fn hypa_save_all(
 mod tests {
     use super::*;
 
-    #[test]
-    fn summary_serialization_uses_camelcase_keys() {
-        let s = Summary {
-            text: "hello".into(),
-            chat_memos: vec!["a".into(), "b".into()],
-            embedding: Some(vec![0.1, 0.2]),
-            is_important: true,
-            pin_boost: 0.5,
-            invalidated: false,
-        };
-        let v = serde_json::to_value(&s).unwrap();
-        // §10-A: completeness — RisuAI compatible field names present.
-        assert!(v.get("chatMemos").is_some(), "expected chatMemos key");
-        assert!(v.get("isImportant").is_some(), "expected isImportant key");
-        assert!(v.get("pinBoost").is_some(), "expected pinBoost key");
-        // §10-A: soundness — Rust snake_case names absent in wire format.
-        assert!(v.get("chat_memos").is_none());
-        assert!(v.get("is_important").is_none());
-        assert!(v.get("pin_boost").is_none());
-    }
-
-    #[test]
-    fn summary_deserialization_accepts_risuai_shape() {
-        // §1: RisuAI HypaV3 minimum shape.
-        let raw = r#"{"text":"abc","chatMemos":["m1"],"isImportant":true}"#;
-        let s: Summary = serde_json::from_str(raw).unwrap();
-        assert_eq!(s.text, "abc");
-        assert_eq!(s.chat_memos, vec!["m1".to_string()]);
-        assert!(s.is_important);
-        // Defaults for new-arona-bot fields.
-        assert_eq!(s.pin_boost, 0.0);
-        assert!(!s.invalidated);
-        assert!(s.embedding.is_none());
-    }
+    // `Summary` / `HypaData` serde roundtrip tests live in `layream_core::hypa`
+    // (single definition site, §4.1) — the duplicates that lived here were
+    // removed with the duplicate type definitions. What remains below covers
+    // logic local to this command layer.
 
     #[test]
     fn parse_summary_text_handles_json_and_raw() {
@@ -712,14 +809,44 @@ mod tests {
     }
 
     #[test]
-    fn hypa_data_roundtrip_preserves_extra_fields() {
-        // §1-C / §10-B: future fields must roundtrip unchanged.
-        let raw = serde_json::json!({
-            "summaries": [],
-            "settings": { "memoryTokensRatio": 0.2 }
+    fn estimate_tokens_uses_four_chars_per_token() {
+        assert_eq!(estimate_tokens(""), 0);
+        assert_eq!(estimate_tokens("abc"), 0); // 3 / 4
+        assert_eq!(estimate_tokens("abcd"), 1); // 4 / 4
+        assert_eq!(estimate_tokens(&"x".repeat(40)), 10);
+    }
+
+    #[test]
+    fn hypa_settings_from_value_maps_camelcase_and_defaults() {
+        // External/Layream preset shape: camelCase ratios, omits randomMemoryRatio
+        // (Layream-internal) and carries unrelated provider keys → both tolerated.
+        let v = serde_json::json!({
+            "memoryTokensRatio": 0.3,
+            "recentMemoryRatio": 0.4,
+            "similarMemoryRatio": 0.6,
+            "maxChatsPerSummary": 8,
+            "preserveOrphanedMemory": true,
+            "provider": "vertex",
+            "model": "gemini"
         });
-        let data: HypaData = serde_json::from_value(raw.clone()).unwrap();
-        let back = serde_json::to_value(&data).unwrap();
-        assert_eq!(back.get("settings"), raw.get("settings"));
+        let s = hypa_settings_from_value(&v).unwrap();
+        assert_eq!(s.memory_tokens_ratio, 0.3);
+        assert_eq!(s.recent_memory_ratio, 0.4);
+        assert_eq!(s.similar_memory_ratio, 0.6);
+        assert_eq!(s.max_chats_per_summary, 8);
+        assert!(s.preserve_orphaned_memory);
+        // Omitted Layream-internal key falls back to default.
+        assert_eq!(
+            s.random_memory_ratio,
+            HypaSettings::default().random_memory_ratio
+        );
+    }
+
+    #[test]
+    fn hypa_settings_from_value_rejects_wrong_type() {
+        // A ratio supplied as a string is malformed → surfaced, not silently
+        // defaulted (§5.1).
+        let v = serde_json::json!({ "memoryTokensRatio": "lots" });
+        assert!(hypa_settings_from_value(&v).is_err());
     }
 }

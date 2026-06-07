@@ -94,11 +94,37 @@ export function matchesLorebook(entry, conversationText) {
  *  @param {object|null} opts.loadedCharacter
  *  @param {object} opts.settings
  *  @param {object} opts.activeToggles - current toggle state
- *  @param {object|null} opts.hypaApi
  *  @param {string} [opts.conversationText] - recent conversation text for lorebook keyword matching
+ *  @param {number[]|null} [opts.queryEmbedding] - precomputed query embedding for the HyPA memory slot's similar phase (omit/empty → that phase is skipped)
  *  @param {object|null} [opts.cachedPreset] - pre-loaded preset from appStore (skips invoke if provided)
  *  @param {string|null} [opts.personaPrompt] - selected persona prompt (overrides character persona slot) */
-export async function assemblePrompt(invoke, flashError, { loadedCharacter, settings, activeToggles, hypaApi, conversationText, cachedPreset, personaPrompt }) {
+/** Default share of the context window given to the HyPA memory slot when the
+ *  preset/settings do not specify `memoryTokensRatio`. Matches the backend
+ *  `HypaSettings::default().memory_tokens_ratio` (0.2) so the slot budget is
+ *  consistent across the JS and Rust sides. */
+const DEFAULT_MEMORY_TOKENS_RATIO = 0.2;
+
+/** Token budget for the memory slot when the preset declares no context limit
+ *  (maxContext <= 0 / -1000, the "unlimited" sentinel in trimToContextWindow).
+ *  A fixed cap so unlimited-context presets still bound the memory slot. */
+const NO_LIMIT_MEMORY_TOKEN_BUDGET = 8192;
+
+/** Translate the frontend `settings.hypa` object onto the backend HypaSettings
+ *  camelCase shape. Only keys the frontend currently persists are mapped; the
+ *  backend fills every other field from its own defaults (tolerant deserialize),
+ *  so omissions are safe. `similarRatio` is the frontend's internal name for the
+ *  external `similarMemoryRatio` key (see HypaView import mapping). */
+function hypaSettingsForBackend(hypa) {
+  const out = {};
+  if (hypa?.similarRatio != null) out.similarMemoryRatio = hypa.similarRatio;
+  if (hypa?.memoryTokensRatio != null) out.memoryTokensRatio = hypa.memoryTokensRatio;
+  if (hypa?.recentMemoryRatio != null) out.recentMemoryRatio = hypa.recentMemoryRatio;
+  if (hypa?.maxChatsPerSummary != null) out.maxChatsPerSummary = hypa.maxChatsPerSummary;
+  if (hypa?.preserveOrphanedMemory != null) out.preserveOrphanedMemory = hypa.preserveOrphanedMemory;
+  return out;
+}
+
+export async function assemblePrompt(invoke, flashError, { loadedCharacter, settings, activeToggles, conversationText, queryEmbedding, cachedPreset, personaPrompt }) {
   let systemPrompt = null;
   let postChatText = "";
   let loadedPreset = null;
@@ -243,18 +269,44 @@ export async function assemblePrompt(invoke, flashError, { loadedCharacter, sett
           }
           emit(fmt.replace(/\{\{slot\}\}/g, personaSlot));
         } else if (type === "memory") {
+          // HyPA memory slot. Routed through the core 4-phase select_memories
+          // pipeline (hypa_select_block) instead of dumping every summary:
+          // important → pinned → recent → similar → random, budgeted to a share
+          // of the context window. queryEmbedding (passed by ChatView from its
+          // precomputed userMsg embedding) drives the similar phase; when absent
+          // the backend skips that phase and still runs the others (graceful
+          // degradation), so non-chat callers still get important/recent memory.
           const fmt = item.innerFormat || "{{slot}}";
           let memoryBlock = "";
-          if (hypaApi?.loadAll) {
-            try {
-              const allSummaries = await hypaApi.loadAll();
-              if (Array.isArray(allSummaries) && allSummaries.length > 0) {
-                memoryBlock = allSummaries.map(s => s?.text || s?.content || "").filter(Boolean).join("\n\n");
-              }
-            } catch (e) {
-              console.error("memory slot load failed:", e);
-              flashError(e, "메모리 로드");
-            }
+          const hypa = settings.hypa || {};
+          // hypa_select_block wraps the selected summaries in <Past Events
+          // Summary> after selection. The backend reserves the wrapper's own
+          // token cost before selecting: it subtracts estimate_tokens(
+          // MEMORY_BLOCK_WRAPPER) from this tokenBudget (saturating_sub) so the
+          // wrapped block fits the budget we pass here. See MEMORY_BLOCK_WRAPPER
+          // in commands_hypa.rs (hypa_select_block).
+          const ratio = hypa.memoryTokensRatio ?? DEFAULT_MEMORY_TOKENS_RATIO;
+          const maxContext = loadedPreset?.maxContext;
+          // maxContext <= 0 / -1000 means "no limit" (see trimToContextWindow);
+          // fall back to a generous fixed budget so memory still selects.
+          const tokenBudget = (maxContext && maxContext > 0)
+            ? Math.floor(maxContext * ratio)
+            : NO_LIMIT_MEMORY_TOKEN_BUDGET;
+          try {
+            const queryEmbeddings = Array.isArray(queryEmbedding) && queryEmbedding.length > 0
+              ? [queryEmbedding]
+              : [];
+            const queryWeights = queryEmbeddings.length > 0 ? [1.0] : [];
+            memoryBlock = await invoke("hypa_select_block", {
+              query_embeddings: queryEmbeddings,
+              query_weights: queryWeights,
+              token_budget: tokenBudget,
+              settings: hypaSettingsForBackend(hypa),
+            });
+            if (typeof memoryBlock !== "string") memoryBlock = "";
+          } catch (e) {
+            console.error("memory slot select failed:", e);
+            flashError(e, "메모리 선택");
           }
           if (memoryBlock || fmt !== "{{slot}}") emit(fmt.replace(/\{\{slot\}\}/g, memoryBlock));
         } else if (type === "lorebook") {

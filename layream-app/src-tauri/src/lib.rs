@@ -36,6 +36,23 @@ pub fn run() {
         .setup(|app| {
             let auth_state = app.state::<commands_auth::AuthState>();
             auth_state.load_persisted_tokens(app.handle());
+
+            // Request-log persistence (REFACTOR_HYPA §6): resolve the data dir
+            // into RequestLogState (the app handle isn't available at Default
+            // construction) and restore the saved on/off toggle from settings.
+            let log_state = app.state::<commands_chat::RequestLogState>();
+            if let Ok(data_dir) = persistence::get_data_dir(app.handle()) {
+                let persisted = persistence::load_settings(&data_dir)
+                    .ok()
+                    .and_then(|s| s.get("logPersistence").and_then(|v| v.as_bool()))
+                    .unwrap_or(false);
+                if let Ok(mut dir) = log_state.data_dir.lock() {
+                    *dir = Some(data_dir);
+                }
+                if let Ok(mut p) = log_state.persist.lock() {
+                    *p = persisted;
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -62,6 +79,8 @@ pub fn run() {
             commands_cbs::highlight_cbs,
             commands_chat::get_request_logs,
             commands_chat::clear_request_logs,
+            commands_chat::get_log_persistence,
+            commands_chat::set_log_persistence,
             commands_settings::cmd_save_settings,
             commands_settings::cmd_load_settings,
             commands_chat::embed_vertex,
@@ -119,7 +138,9 @@ pub fn run() {
             commands_workspace::cmd_workspace_load_session_ws,
             commands_hypa::hypa_summarize,
             commands_hypa::hypa_search,
+            commands_hypa::hypa_select_block,
             commands_hypa::hypa_pin_message,
+            commands_hypa::hypa_toggle_important,
             commands_hypa::hypa_invalidate_summary,
             commands_hypa::hypa_cleanup,
             commands_hypa::hypa_load_all,

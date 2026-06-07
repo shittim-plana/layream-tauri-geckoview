@@ -234,22 +234,29 @@
       const settings = await invoke("cmd_load_settings") || {};
       const provider = settings.chatProvider || "vertex";
 
-      const pr = await assemblePrompt(invoke, flashError, { loadedCharacter, settings, activeToggles, hypaApi });
+      // Embed the user message ONCE, before prompt assembly, when HyPA is in
+      // play. The same embedding feeds two consumers: the preset memory slot
+      // (assemblePrompt's hypa_select_block similar phase) and the legacy
+      // [Memory] user-message injection below — avoiding a double embed call.
+      let qe = null;
+      if (hypaApi?.getRagContext) {
+        try { qe = await embedQueryForRag(invoke, flashError, settings, userMsg); }
+        catch (e) { console.error("RAG query embed failed:", e); flashError(e, "RAG 쿼리 임베딩"); }
+      }
+
+      const pr = await assemblePrompt(invoke, flashError, { loadedCharacter, settings, activeToggles, queryEmbedding: qe });
       let systemPrompt = pr.systemPrompt, postChatText = pr.postChatText;
       const loadedPreset = pr.loadedPreset;
       if (pr.toggleDefs.length > 0) { toggleDefs = pr.toggleDefs; activeToggles = pr.activeToggles; }
       else { toggleDefs = []; }
 
       let injectedUserMsg = userMsg;
-      if (hypaApi?.getRagContext) {
+      if (qe && hypaApi?.getRagContext) {
         try {
-          const qe = await embedQueryForRag(invoke, flashError, settings, userMsg);
-          if (qe) {
-            const hits = await hypaApi.getRagContext(qe, 5);
-            if (Array.isArray(hits) && hits.length > 0) {
-              const mem = hits.map(h => h?.summary?.text).filter(Boolean).join("\n\n");
-              if (mem) injectedUserMsg = `[Memory]\n${mem}\n\n[User]\n${userMsg}`;
-            }
+          const hits = await hypaApi.getRagContext(qe, 5);
+          if (Array.isArray(hits) && hits.length > 0) {
+            const mem = hits.map(h => h?.summary?.text).filter(Boolean).join("\n\n");
+            if (mem) injectedUserMsg = `[Memory]\n${mem}\n\n[User]\n${userMsg}`;
           }
         } catch (e) { console.error("RAG injection failed:", e); flashError(e, "RAG 컨텍스트 조회"); }
       }
@@ -415,22 +422,22 @@
       <div class="message {msg.role}" class:pinned={msg.pinned}>
         {#if msg.role !== "error"}
           <div class="msg-actions">
-            <button class="msg-action-btn msg-fork-btn" onclick={(e) => { e.stopPropagation(); forkFromMessage(msg.chatId); }} disabled={streaming} title="포크 (분기 생성)" aria-label="이 메시지에서 분기">
+            <button class="msg-action-btn msg-fork-btn" onclick={(e) => { e.stopPropagation(); forkFromMessage(msg.chatId); }} disabled={streaming} title="포크 (분기 생성)">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                 <path d="M6 3v12M18 9a3 3 0 100-6 3 3 0 000 6zM6 21a3 3 0 100-6 3 3 0 000 6zM18 9a9 9 0 01-9 9" />
               </svg>
             </button>
             {#if msg.role === "char"}
-              <button class="msg-action-btn msg-pin-btn" class:pinned={msg.pinned} onclick={() => pinMessage(msg)} disabled={streaming} title={msg.pinned ? "핀 해제" : "핀"} aria-label={msg.pinned ? "핀 해제" : "핀 고정"}>
+              <button class="msg-action-btn msg-pin-btn" class:pinned={msg.pinned} onclick={() => pinMessage(msg)} disabled={streaming} title={msg.pinned ? "핀 해제" : "핀"}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill={msg.pinned ? "currentColor" : "none"} stroke="currentColor" stroke-width="2">
                   <path d="M12 2L8.5 8.5 2 9.5l4.5 5L5.5 22 12 18.5 18.5 22l-1-7.5 4.5-5-6.5-1z" />
                 </svg>
               </button>
-              <button class="msg-action-btn msg-regen-btn" onclick={() => regenerateFrom(msg)} disabled={streaming} title="여기서 재생성" aria-label="이 응답부터 재생성">↻</button>
+              <button class="msg-action-btn msg-regen-btn" onclick={() => regenerateFrom(msg)} disabled={streaming} title="여기서 재생성">↻</button>
             {/if}
             <button class="msg-action-btn" onclick={() => copyMessage(msg)} title={copiedMsgId === msg.chatId ? "복사됨" : "복사"}>{copiedMsgId === msg.chatId ? "✓" : "📋"}</button>
-            <button class="msg-action-btn" onclick={() => startEdit(msg)} disabled={streaming || editingMsgId !== null} title="편집" aria-label="메시지 편집">✏</button>
-            <button class="msg-action-btn msg-delete-btn" onclick={() => deleteMessage(msg.chatId)} disabled={streaming} title="삭제" aria-label="메시지 삭제">×</button>
+            <button class="msg-action-btn" onclick={() => startEdit(msg)} disabled={streaming || editingMsgId !== null} title="편집">✏</button>
+            <button class="msg-action-btn msg-delete-btn" onclick={() => deleteMessage(msg.chatId)} disabled={streaming} title="삭제">×</button>
           </div>
         {/if}
         {#if msg.chatId === editingMsgId}
@@ -492,7 +499,7 @@
 
         {#if forkCount > 0}
           <div class="fork-indicator" style="position: relative;">
-            <button class="fork-badge" onclick={(e) => { e.stopPropagation(); toggleForkDropdown(msg.chatId); }} aria-label="브랜치 목록 보기">
+            <button class="fork-badge" onclick={(e) => { e.stopPropagation(); toggleForkDropdown(msg.chatId); }}>
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                 <path d="M6 3v12M18 9a3 3 0 100-6 3 3 0 000 6zM6 21a3 3 0 100-6 3 3 0 000 6zM18 9a9 9 0 01-9 9" />
               </svg>
@@ -513,17 +520,17 @@
 
         {#if i === 0 && msg.role === "char" && greetings.length >= 2}
           <div class="swipe-nav">
-            <button onclick={() => swipeGreeting(-1)} aria-label="이전 인사말">◀</button>
+            <button onclick={() => swipeGreeting(-1)}>◀</button>
             <span>{greetingIndex + 1}/{greetings.length}</span>
-            <button onclick={() => swipeGreeting(1)} aria-label="다음 인사말">▶</button>
+            <button onclick={() => swipeGreeting(1)}>▶</button>
           </div>
         {:else if msg.role === "char" && msg.alternatives?.length}
           {@const total = msg._allResponses?.length ?? ((msg.alternatives?.length || 0) + 1)}
           {@const current = (msg._responseIdx ?? (total - 1)) + 1}
           <div class="swipe-nav">
-            <button onclick={() => swipeResponse(msg, -1)} disabled={streaming} aria-label="이전 응답">◀</button>
+            <button onclick={() => swipeResponse(msg, -1)} disabled={streaming}>◀</button>
             <span>{current}/{total}</span>
-            <button onclick={() => swipeResponse(msg, 1)} disabled={streaming} aria-label="다음 응답">▶</button>
+            <button onclick={() => swipeResponse(msg, 1)} disabled={streaming}>▶</button>
           </div>
         {/if}
       </div>
@@ -547,7 +554,7 @@
     {/if}
 
     {#if !isNearBottom && visibleMessages.length > 0}
-      <button class="scroll-to-bottom" onclick={scrollToBottom} title="최신 메시지로 이동" aria-label="최신 메시지로 스크롤">
+      <button class="scroll-to-bottom" onclick={scrollToBottom} title="최신 메시지로 이동">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6" /></svg>
       </button>
     {/if}
@@ -558,7 +565,7 @@
   <div class="chat-input-bar">
     {#if toggleDefs.length > 0}
       <div class="toggle-panel-wrapper">
-        <button class="toggle-panel-trigger" onclick={() => { togglePanelOpen = !togglePanelOpen; }} aria-expanded={togglePanelOpen} aria-label="프롬프트 토글 패널 열기/닫기">
+        <button class="toggle-panel-trigger" onclick={() => { togglePanelOpen = !togglePanelOpen; }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" /></svg>
           토글 ({Object.values(activeToggles).filter(Boolean).length}/{toggleDefs.length})
           <svg class="toggle-panel-chevron" class:open={togglePanelOpen} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6" /></svg>
@@ -585,10 +592,10 @@
     </div>
     <div class="input-row">
       {#if visibleMessages.length > 0}
-        <button class="btn-icon" onclick={clearChat} disabled={streaming} title="대화 비우기" aria-label="대화 비우기" style="flex-shrink: 0; align-self: center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z" /></svg></button>
+        <button class="btn-icon" onclick={clearChat} disabled={streaming} title="대화 비우기" style="flex-shrink: 0; align-self: center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z" /></svg></button>
       {/if}
       {#if visibleMessages.length > 0 && visibleMessages[visibleMessages.length - 1].role === "char"}
-        <button class="btn-icon" onclick={regenerateResponse} disabled={streaming} title="응답 재생성" aria-label="응답 재생성" style="flex-shrink: 0; align-self: center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6" /><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" /></svg></button>
+        <button class="btn-icon" onclick={regenerateResponse} disabled={streaming} title="응답 재생성" style="flex-shrink: 0; align-self: center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6" /><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" /></svg></button>
       {/if}
       <textarea class="chat-input" rows="1" placeholder="메시지를 입력하세요..." bind:value={chatInput} bind:this={chatInputEl} onkeydown={handleChatKeydown} oninput={autoResize} style="height: auto; min-height: 36px;"></textarea>
       {#if streaming}
@@ -596,12 +603,12 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
         </button>
       {:else}
-        <button class="send-btn" onclick={sendMessage} disabled={!chatInput.trim()} title="전송" aria-label="메시지 전송">
+        <button class="send-btn" onclick={sendMessage} disabled={!chatInput.trim()} title="전송">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" /></svg>
         </button>
       {/if}
     </div>
-    <div style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)" role="status" aria-live="polite">{streaming ? "응답 생성 중..." : ""}</div>
+
   </div>
 </div>
 

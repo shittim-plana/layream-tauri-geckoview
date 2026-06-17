@@ -20,3 +20,5 @@ REFACTOR_HYPA.md
 REFACTOR_CBS.md
 testdata/
 layream-core/tests/interop.rs
+SCRATCH.md
+DEVICE-BUGS.md

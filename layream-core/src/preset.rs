@@ -6,7 +6,7 @@ use std::io::{Read, Write};
 use crate::crypto;
 use crate::error::LayreamError;
 use crate::rpack;
-use crate::types::{BotPreset, PresetEnvelope};
+use crate::types::{BotPreset, PresetEnvelope, RisuModule};
 
 const PRESET_KEY: &str = "risupreset";
 
@@ -130,7 +130,7 @@ fn decode_json(data: &[u8]) -> Result<BotPreset, LayreamError> {
 }
 
 fn encode_risup(preset: &BotPreset) -> Result<(Vec<u8>, &'static str), LayreamError> {
-    let inner_msgpack = rmp_serde::to_vec(preset)?;
+    let inner_msgpack = rmp_serde::to_vec_named(preset)?;
     let encrypted = crypto::encrypt(&inner_msgpack, PRESET_KEY)?;
 
     let envelope = PresetEnvelope {
@@ -139,7 +139,7 @@ fn encode_risup(preset: &BotPreset) -> Result<(Vec<u8>, &'static str), LayreamEr
         preset: encrypted,
     };
 
-    let outer_msgpack = rmp_serde::to_vec(&envelope)?;
+    let outer_msgpack = rmp_serde::to_vec_named(&envelope)?;
     let compressed = gz_compress(&outer_msgpack)?;
     let packed = rpack::encode(&compressed);
 
@@ -281,6 +281,31 @@ fn read_u32_le(data: &[u8], pos: &mut usize) -> Result<u32, LayreamError> {
     ]);
     *pos += 4;
     Ok(val)
+}
+
+/// Encode a `RisuModule` into the binary .risum container format.
+///
+/// Format: `[magic=111][version=0][u32le main_len][rpack(json_bytes)][0x00 terminator]`
+///
+/// Assets are not included in this encoding (main payload + terminator only).
+pub fn encode_risum(module: &RisuModule) -> Result<Vec<u8>, LayreamError> {
+    let json_bytes = serde_json::to_vec(module)?;
+    let main_encoded = rpack::encode(&json_bytes);
+
+    let mut buf = Vec::new();
+
+    // Header
+    buf.push(RISUM_MAGIC);
+    buf.push(RISUM_VERSION);
+
+    // Main payload length + rpack-encoded data
+    buf.extend_from_slice(&(main_encoded.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&main_encoded);
+
+    // End marker (no asset chunks)
+    buf.push(RISUM_END_MARKER);
+
+    Ok(buf)
 }
 
 #[cfg(test)]

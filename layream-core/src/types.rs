@@ -193,12 +193,16 @@ pub struct LoreBook {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoreBookExtensions {
     pub risu_case_sensitive: bool,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoreCache {
     pub key: String,
     pub data: Vec<String>,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,6 +216,8 @@ pub struct CustomScript {
     pub flag: Option<String>,
     #[serde(rename = "ableFlag")]
     pub able_flag: Option<bool>,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,6 +229,8 @@ pub struct TriggerScript {
     pub effect: Value,
     #[serde(rename = "lowLevelAccess")]
     pub low_level_access: Option<bool>,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -355,6 +363,8 @@ pub struct PromptSettings {
     pub custom_chain_of_thought: Option<bool>,
     #[serde(rename = "maxThoughtTagDepth")]
     pub max_thought_tag_depth: Option<i32>,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -369,6 +379,8 @@ pub struct SeparateParameters {
     pub presence_penalty: Option<f64>,
     pub reasoning_effort: Option<f64>,
     pub thinking_tokens: Option<i32>,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -381,6 +393,8 @@ pub struct SeparateParametersSet {
     pub translate: SeparateParameters,
     #[serde(rename = "otherAx", default)]
     pub other_ax: SeparateParameters,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 // --- Settings types ---
@@ -399,6 +413,8 @@ pub struct OobaFormatting {
     pub seperator: String,
     #[serde(default, rename = "useName")]
     pub use_name: bool,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -451,6 +467,8 @@ pub struct OobaSettings {
     pub eta_cutoff: f64,
     #[serde(default)]
     pub formating: OobaFormatting,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -473,6 +491,8 @@ pub struct AinSettings {
     pub stoptokens: String,
     #[serde(default)]
     pub top_k: u32,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -503,6 +523,8 @@ pub struct NaiSettings {
     pub mirostat_lr: Option<f64>,
     pub mirostat_tau: Option<f64>,
     pub cfg_scale: Option<f64>,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -552,6 +574,8 @@ pub struct OobaChatCompletionParams {
     pub add_bos_token: Option<bool>,
     pub skip_special_tokens: Option<bool>,
     pub grammar_string: Option<String>,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 // --- Bot preset ---
@@ -736,6 +760,8 @@ pub struct CharacterBook {
     pub recursive_scanning: Option<bool>,
     pub extensions: Value,
     pub entries: Vec<CharBookEntry>,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -780,12 +806,16 @@ pub struct NewGenData {
     pub instructions: String,
     #[serde(rename = "emotionInstructions")]
     pub emotion_instructions: String,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DepthPrompt {
     pub depth: u32,
     pub prompt: String,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -839,6 +869,8 @@ pub struct CharacterCardV2Risu {
     pub spec: String,
     pub spec_version: String,
     pub data: CharacterCardV2Data,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

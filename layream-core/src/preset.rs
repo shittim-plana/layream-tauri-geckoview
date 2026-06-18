@@ -289,7 +289,11 @@ fn read_u32_le(data: &[u8], pos: &mut usize) -> Result<u32, LayreamError> {
 ///
 /// Assets are not included in this encoding (main payload + terminator only).
 pub fn encode_risum(module: &RisuModule) -> Result<Vec<u8>, LayreamError> {
-    let json_bytes = serde_json::to_vec(module)?;
+    let envelope = serde_json::json!({
+        "type": "risuModule",
+        "module": module
+    });
+    let json_bytes = serde_json::to_vec(&envelope)?;
     let main_encoded = rpack::encode(&json_bytes);
 
     let mut buf = Vec::new();

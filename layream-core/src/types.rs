@@ -16,6 +16,60 @@ where
     }
 }
 
+fn deserialize_lax_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = Value::deserialize(deserializer)?;
+    match &v {
+        Value::Number(n) => n
+            .as_u64()
+            .map(|n| n as u32)
+            .ok_or_else(|| serde::de::Error::custom(format!("invalid u32: {}", v))),
+        Value::String(s) => s
+            .parse::<u32>()
+            .map_err(|_| serde::de::Error::custom(format!("invalid u32 string: {}", s))),
+        _ => Err(serde::de::Error::custom(format!("expected number or string, got: {}", v))),
+    }
+}
+
+fn deserialize_lax_option_u32<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = Option::<Value>::deserialize(deserializer)?;
+    match v {
+        None => Ok(None),
+        Some(Value::Null) => Ok(None),
+        Some(Value::Number(n)) => n
+            .as_u64()
+            .map(|n| Some(n as u32))
+            .ok_or_else(|| serde::de::Error::custom("invalid u32")),
+        Some(Value::String(s)) => s
+            .parse::<u32>()
+            .map(Some)
+            .map_err(|_| serde::de::Error::custom(format!("invalid u32 string: {}", s))),
+        Some(other) => Err(serde::de::Error::custom(format!("expected number or string, got: {}", other))),
+    }
+}
+
+fn deserialize_lax_i32<'de, D>(deserializer: D) -> Result<i32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = Value::deserialize(deserializer)?;
+    match &v {
+        Value::Number(n) => n
+            .as_i64()
+            .map(|n| n as i32)
+            .ok_or_else(|| serde::de::Error::custom(format!("invalid i32: {}", v))),
+        Value::String(s) => s
+            .parse::<i32>()
+            .map_err(|_| serde::de::Error::custom(format!("invalid i32 string: {}", s))),
+        _ => Err(serde::de::Error::custom(format!("expected number or string, got: {}", v))),
+    }
+}
+
 // --- Enums ---
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -28,6 +82,10 @@ pub enum LoreBookMode {
     Normal,
     #[serde(rename = "child")]
     Child,
+    #[serde(rename = "folder")]
+    Folder,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -168,6 +226,7 @@ pub enum LLMFormat {
 pub struct LoreBook {
     pub key: String,
     pub secondkey: String,
+    #[serde(deserialize_with = "deserialize_lax_i32")]
     pub insertorder: i32,
     pub comment: String,
     pub content: String,
@@ -183,7 +242,7 @@ pub struct LoreBook {
     pub lore_cache: Option<LoreCache>,
     #[serde(rename = "useRegex")]
     pub use_regex: Option<bool>,
-    #[serde(rename = "bookVersion")]
+    #[serde(rename = "bookVersion", default, deserialize_with = "deserialize_lax_option_u32")]
     pub book_version: Option<u32>,
     pub id: Option<String>,
     #[serde(flatten, default)]
@@ -812,6 +871,7 @@ pub struct NewGenData {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DepthPrompt {
+    #[serde(deserialize_with = "deserialize_lax_u32")]
     pub depth: u32,
     pub prompt: String,
     #[serde(flatten, default)]
@@ -900,6 +960,19 @@ pub struct PresetEnvelope {
     pub envelope_type: String,
     #[serde(with = "serde_bytes")]
     pub preset: Vec<u8>,
+}
+
+// --- Persona card ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonaCard {
+    pub name: String,
+    #[serde(rename = "personaPrompt")]
+    pub persona_prompt: String,
+    #[serde(default)]
+    pub note: Option<String>,
+    #[serde(flatten, default)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
 // --- RisuAI Message ---

@@ -5,7 +5,7 @@ use flate2::read::GzDecoder;
 
 use crate::crypto;
 use crate::error::LayreamError;
-use crate::types::{CharacterCardV2Risu, OldTavernChar};
+use crate::types::{CharacterCardV2Risu, OldTavernChar, PersonaCard};
 
 #[derive(Debug, Clone)]
 pub enum CardData {
@@ -257,6 +257,22 @@ fn parse_rcc(raw: &str) -> Result<Option<CardData>, LayreamError> {
 
 const SIG_ALPHA: &str = "stealth_pnginfo";
 const SIG_ALPHA_COMP: &str = "stealth_pngcomp";
+/// Read a persona card from a PNG file.
+///
+/// Persona cards store JSON in a `tEXt` chunk with keyword `persona`.
+/// Payload is base64-encoded `{ name, personaPrompt, note? }`.
+pub fn read_persona(data: &[u8]) -> Result<PersonaCard, LayreamError> {
+    let chunks = read_png_text_chunks(data);
+    for chunk in &chunks {
+        if chunk.key == "persona" {
+            let decoded = base64_decode(&chunk.value)?;
+            let card: PersonaCard = serde_json::from_slice(&decoded)?;
+            return Ok(card);
+        }
+    }
+    Err(LayreamError::Http("no persona tEXt chunk found".to_string()))
+}
+
 const SIG_RGB: &str = "stealth_rgbinfo";
 const SIG_RGB_COMP: &str = "stealth_rgbcomp";
 

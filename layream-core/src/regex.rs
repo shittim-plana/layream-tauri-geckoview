@@ -60,73 +60,19 @@ fn translate_js_replacement(js_replacement: &str) -> String {
     result
 }
 
-/// A compiled regex that may use either the standard `regex` crate
-/// or `fancy_regex` (for lookaround etc.).
-enum CompiledRegex {
-    Standard(regex::Regex),
-    Fancy(fancy_regex::Regex),
-}
-
-impl CompiledRegex {
-    fn replace_all(&self, text: &str, replacement: &str) -> String {
-        match self {
-            CompiledRegex::Standard(re) => re.replace_all(text, replacement).into_owned(),
-            CompiledRegex::Fancy(re) => re.replace_all(text, replacement).into_owned(),
-        }
-    }
-}
-
 /// Build a compiled regex from a pattern string, handling JS `/pattern/flags` format.
-/// Tries the standard `regex` crate first; falls back to `fancy_regex` for
-/// features like lookaround.
-fn build_regex(raw_pattern: &str) -> Result<CompiledRegex, String> {
+fn build_regex(raw_pattern: &str) -> Result<regex::Regex, String> {
     let (pattern, flags_str) = match parse_js_regex(raw_pattern) {
         Some((p, f)) => (p, f),
         None => (raw_pattern, ""),
     };
 
-    let case_insensitive = flags_str.contains('i');
-    let multi_line = flags_str.contains('m');
-    let dot_matches_new_line = flags_str.contains('s');
-    // 'g' is default (replace_all), 'u' is default in Rust regex
-
-    // Try standard regex first
-    let standard_result = RegexBuilder::new(pattern)
-        .case_insensitive(case_insensitive)
-        .multi_line(multi_line)
-        .dot_matches_new_line(dot_matches_new_line)
-        .build();
-
-    match standard_result {
-        Ok(re) => Ok(CompiledRegex::Standard(re)),
-        Err(std_err) => {
-            // Fallback to fancy-regex (supports lookaround, backreferences, etc.)
-            let mut fancy_pattern = String::new();
-            // fancy-regex doesn't have a builder, so prepend inline flags
-            if case_insensitive || multi_line || dot_matches_new_line {
-                fancy_pattern.push_str("(?");
-                if case_insensitive {
-                    fancy_pattern.push('i');
-                }
-                if multi_line {
-                    fancy_pattern.push('m');
-                }
-                if dot_matches_new_line {
-                    fancy_pattern.push('s');
-                }
-                fancy_pattern.push(')');
-            }
-            fancy_pattern.push_str(pattern);
-
-            match fancy_regex::Regex::new(&fancy_pattern) {
-                Ok(re) => Ok(CompiledRegex::Fancy(re)),
-                Err(fancy_err) => Err(format!(
-                    "regex failed — standard: {}, fancy: {}",
-                    std_err, fancy_err
-                )),
-            }
-        }
-    }
+    RegexBuilder::new(pattern)
+        .case_insensitive(flags_str.contains('i'))
+        .multi_line(flags_str.contains('m'))
+        .dot_matches_new_line(flags_str.contains('s'))
+        .build()
+        .map_err(|e| e.to_string())
 }
 
 pub fn apply_regex(
@@ -160,7 +106,7 @@ pub fn apply_regex(
         match build_regex(&script.pattern) {
             Ok(re) => {
                 let replacement = translate_js_replacement(&script.out);
-                result = re.replace_all(&result, &replacement);
+                result = re.replace_all(&result, replacement.as_str()).into_owned();
             }
             Err(e) => {
                 log::warn!(
@@ -188,7 +134,7 @@ pub fn test_regex(pattern: &str, replacement: &str, input: &str) -> RegexTestRes
         Ok(re) => {
             let translated = translate_js_replacement(replacement);
             RegexTestResult {
-                output: re.replace_all(input, &translated),
+                output: re.replace_all(input, translated.as_str()).into_owned(),
                 error: None,
             }
         }
@@ -363,29 +309,6 @@ mod tests {
             apply_regex("hello world", &scripts, None, None),
             "[hello] [world]"
         );
-    }
-
-    // fancy_regex fallback (lookahead/lookbehind)
-
-    #[test]
-    fn fancy_regex_lookahead() {
-        let scripts = vec![make_script("foo(?=bar)", "baz")];
-        assert_eq!(
-            apply_regex("foobar fooqux", &scripts, None, None),
-            "bazbar fooqux"
-        );
-    }
-
-    #[test]
-    fn fancy_regex_lookbehind() {
-        let scripts = vec![make_script("(?<=foo)bar", "baz")];
-        assert_eq!(apply_regex("foobar", &scripts, None, None), "foobaz");
-    }
-
-    #[test]
-    fn fancy_regex_with_js_flags() {
-        let scripts = vec![make_script("/foo(?=bar)/i", "baz")];
-        assert_eq!(apply_regex("FOObar", &scripts, None, None), "bazbar");
     }
 
     // script_type filtering

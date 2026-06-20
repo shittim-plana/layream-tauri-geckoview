@@ -105,7 +105,7 @@
       log(null, `Cannot start: ${autopilotSchemaError}`);
       return;
     }
-    autopilotLog = [{ turn: null, status: "Started", time: new Date().toLocaleTimeString() }];
+    autopilotLog = [{ turn: null, status: "시작됨", time: new Date().toLocaleTimeString() }];
     autopilotState = "running";
     // fire-and-forget; loop ends when state becomes "stopped".
     // .catch guards against synchronous throws surfacing as unhandled rejections.
@@ -115,19 +115,19 @@
   function pauseAutopilot() {
     if (!isRunning) return;
     autopilotState = "paused";
-    log(null, "Paused");
+    log(null, "일시정지됨");
   }
 
   function resumeAutopilot() {
     if (!isPaused) return;
     autopilotState = "running";
-    log(null, "Resumed");
+    log(null, "재개됨");
   }
 
   function stopAutopilot() {
     if (isStopped) return;
     autopilotState = "stopped";
-    log(null, "Stopped by user");
+    log(null, "정지됨");
   }
 
   // --- Generation arg builder ---
@@ -192,21 +192,21 @@
       // Check FSM at top of every turn (§2-A: pause boundary).
       if (!(await waitWhilePaused())) break;
 
-      let userMsg = "(계속)";
+      let userMsg = " ";
 
       if (autopilotStrategy === "predefined") {
         const lines = autopilotMessages.split("\n").filter((l) => l.trim());
-        userMsg = lines.length > 0 ? lines[(turn - 1) % lines.length] : "(계속)";
+        userMsg = lines.length > 0 ? lines[(turn - 1) % lines.length] : " ";
       } else if (autopilotStrategy === "ai") {
         try {
           const args = await buildGenArgs(personaForTurn(turn));
           userMsg = await invoke("generate_user_message", args);
         } catch (e) {
-          userMsg = "(AI 생성 실패, 계속)";
+          userMsg = " ";
           log(turn, `AI gen failed: ${e}`);
         }
       }
-      // "continue" strategy: userMsg stays "(계속)".
+      // "continue" strategy: userMsg stays " " (minimal non-disruptive fallback).
 
       // Re-check after potentially long AI gen (user may have paused/stopped).
       if (!(await waitWhilePaused())) break;
@@ -224,7 +224,7 @@
 
     // Natural completion or error break: drain to "stopped" unless already stopped.
     if (autopilotState !== "stopped") {
-      log(null, errored ? "Halted on error" : "Completed");
+      log(null, errored ? "오류로 중단됨" : "완료됨");
       autopilotState = "stopped";
     }
   }
@@ -235,13 +235,13 @@
     <span class="card-title">Autopilot Settings</span>
     <div style="display: flex; gap: 6px;">
       {#if isStopped}
-        <button class="btn btn-sm btn-primary" onclick={startAutopilot}>Start</button>
+        <button class="btn btn-sm btn-primary" onclick={startAutopilot}>시작</button>
       {:else if isRunning}
-        <button class="btn btn-sm btn-secondary" onclick={pauseAutopilot}>Pause</button>
-        <button class="btn btn-sm btn-danger" onclick={stopAutopilot}>Stop</button>
+        <button class="btn btn-sm btn-secondary" onclick={pauseAutopilot}>일시정지</button>
+        <button class="btn btn-sm btn-danger" onclick={stopAutopilot}>정지</button>
       {:else if isPaused}
-        <button class="btn btn-sm btn-primary" onclick={resumeAutopilot}>Resume</button>
-        <button class="btn btn-sm btn-danger" onclick={stopAutopilot}>Stop</button>
+        <button class="btn btn-sm btn-primary" onclick={resumeAutopilot}>재개</button>
+        <button class="btn btn-sm btn-danger" onclick={stopAutopilot}>정지</button>
       {/if}
     </div>
   </div>
@@ -335,7 +335,7 @@
   <div class="card">
     <div class="card-header">
       <span class="card-title">Execution Log</span>
-      <button class="btn btn-sm btn-secondary" onclick={() => (autopilotLog = [])} disabled={isRunning}>Clear</button>
+      <button class="btn btn-sm btn-secondary" onclick={() => (autopilotLog = [])} disabled={isRunning}>지우기</button>
     </div>
     <div class="card-body" style="max-height: 300px; overflow-y: auto;">
       {#each autopilotLog as entry}
@@ -348,6 +348,6 @@
 {:else}
   <div class="card"><div class="card-body"><div class="empty-state" style="padding: 28px 20px;">
     <p>실행 로그가 없습니다.</p>
-    <p class="section-note">Start 버튼으로 테스트 루프를 실행해보세요.</p>
+    <p class="section-note">시작 버튼으로 테스트 루프를 실행해보세요.</p>
   </div></div></div>
 {/if}

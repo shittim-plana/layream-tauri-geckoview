@@ -26,7 +26,6 @@
   let greetings = $state([]);
   let greetingIndex = $state(0);
   let chatBottom;
-  let unlisten;
   let unlistenAppFlush;
   let editingMsgId = $state(null);
   let editingText = $state("");
@@ -110,7 +109,6 @@
     if (isTauri()) {
       try {
         const { listen } = await import("@tauri-apps/api/event");
-        unlisten = await listen("chat-chunk", (event) => { streamingText += event.payload; });
         unlistenAppFlush = await listen("app-flush", async () => {
           if (sessionLoaded) {
             try { await sessionAutosave.flush(); }
@@ -133,7 +131,6 @@
   });
 
   onDestroy(() => {
-    if (unlisten) unlisten();
     if (unlistenAppFlush) unlistenAppFlush();
     if (sessionLoaded && messages.length > 0) {
       sessionAutosave.flush();
@@ -244,7 +241,8 @@
         catch (e) { console.error("RAG query embed failed:", e); flashError(e, "RAG 쿼리 임베딩"); }
       }
 
-      const pr = await assemblePrompt(invoke, flashError, { loadedCharacter, settings, activeToggles, queryEmbedding: qe });
+      const conversationText = visibleMessages.map(m => m.text).join("\n");
+      const pr = await assemblePrompt(invoke, flashError, { loadedCharacter, settings, activeToggles, conversationText, queryEmbedding: qe });
       let systemPrompt = pr.systemPrompt, postChatText = pr.postChatText;
       const loadedPreset = pr.loadedPreset;
       if (pr.toggleDefs.length > 0) { toggleDefs = pr.toggleDefs; activeToggles = pr.activeToggles; }
@@ -269,7 +267,7 @@
       if (postChatText) msgs = [...msgs, { role: "user", text: postChatText }];
 
       const result = await dispatchChat(invoke, provider, settings, msgs, systemPrompt);
-      const responseText = streamingText || result || "";
+      const responseText = result || streamingText || "";
       if (responseText) {
         const cr = appendMessage(messages, branches, activeBranchId, "char", responseText, new Date().toLocaleTimeString());
         messages = cr.messages; branches = cr.branches;
@@ -316,8 +314,10 @@
     const prep = prepareRegeneration(visibleMessages, messages, branches, activeBranchId, visibleMessages.length - 1);
     if (!prep) return;
     messages = prep.messages; branches = prep.branches;
-    try { await sendChatMessage(prep.savedUserText); } catch (e) { console.error("regenerateResponse:", e); }
-    messages = reattachAlternatives(messages, getVisibleMessages(messages, branches, activeBranchId), prep.savedAlts);
+    try {
+      await sendChatMessage(prep.savedUserText);
+      messages = reattachAlternatives(messages, getVisibleMessages(messages, branches, activeBranchId), prep.savedAlts);
+    } catch (e) { console.error("regenerateResponse:", e); }
   }
 
   async function regenerateFrom(targetMsg) {
@@ -327,18 +327,23 @@
     const prep = prepareRegeneration(visibleMessages, messages, branches, activeBranchId, visIdx);
     if (!prep) return;
     messages = prep.messages; branches = prep.branches;
-    try { await sendChatMessage(prep.savedUserText); } catch (e) { console.error("regenerateFromMsg:", e); }
-    messages = reattachAlternatives(messages, getVisibleMessages(messages, branches, activeBranchId), prep.savedAlts);
+    try {
+      await sendChatMessage(prep.savedUserText);
+      messages = reattachAlternatives(messages, getVisibleMessages(messages, branches, activeBranchId), prep.savedAlts);
+    } catch (e) { console.error("regenerateFromMsg:", e); }
   }
 
   function swipeResponse(msg, direction) {
     if (!msg.alternatives?.length) return;
-    if (!Array.isArray(msg._allResponses)) { msg._allResponses = [...msg.alternatives, msg.text]; msg._responseIdx = msg._allResponses.length - 1; }
-    const total = msg._allResponses.length;
-    msg._responseIdx = (msg._responseIdx + direction + total) % total;
-    const newText = msg._allResponses[msg._responseIdx];
-    const newAlts = msg._allResponses.filter((_, i) => i !== msg._responseIdx);
-    messages = messages.map(m => m.chatId === msg.chatId ? { ...m, text: newText, alternatives: newAlts, _allResponses: msg._allResponses, _responseIdx: msg._responseIdx } : m);
+    const srcMsg = messages.find(m => m.chatId === msg.chatId);
+    if (!srcMsg) return;
+    const allResponses = Array.isArray(srcMsg._allResponses) ? srcMsg._allResponses : [...srcMsg.alternatives, srcMsg.text];
+    const prevIdx = Array.isArray(srcMsg._allResponses) ? srcMsg._responseIdx : allResponses.length - 1;
+    const total = allResponses.length;
+    const newIdx = (prevIdx + direction + total) % total;
+    const newText = allResponses[newIdx];
+    const newAlts = allResponses.filter((_, i) => i !== newIdx);
+    messages = messages.map(m => m.chatId === msg.chatId ? { ...m, text: newText, alternatives: newAlts, _allResponses: allResponses, _responseIdx: newIdx } : m);
   }
 
   function swipeGreeting(direction) {

@@ -1,6 +1,9 @@
 // Svelte 5 runes-based centralized store
 // .svelte.js extension enables runes outside .svelte files
 
+let _isSwitchingWorkspace = $state(false);
+export function isSwitchingWorkspace() { return _isSwitchingWorkspace; }
+
 let _settings = $state(null);
 let _currentCharacter = $state(null);
 let _currentPreset = $state(null);
@@ -39,6 +42,16 @@ export function initActiveWorkspaceId(id) {
  */
 export async function switchWorkspace(invoke, newId) {
   const oldId = _activeWorkspaceId;
+  _isSwitchingWorkspace = true;
+
+  // 0. Flush unsaved frontend state before reading the backend session.
+  //    Views (ChatView, HypaView) listen for "app-flush" and persist pending changes.
+  try {
+    const { emit } = await import("@tauri-apps/api/event");
+    await emit("app-flush");
+    // Brief grace period for async flush listeners to settle.
+    await new Promise(r => setTimeout(r, 200));
+  } catch (_) { /* emit unavailable outside Tauri */ }
 
   // 1. Save current session to outgoing workspace
   if (oldId) {
@@ -82,6 +95,8 @@ export async function switchWorkspace(invoke, newId) {
 
   // 5. Reload cached store data (settings, character, preset)
   await loadAll(invoke);
+
+  _isSwitchingWorkspace = false;
 }
 
 export async function loadSettings(invoke) {

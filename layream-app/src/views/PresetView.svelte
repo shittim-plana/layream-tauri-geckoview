@@ -111,6 +111,10 @@
     if ("text" in item) item.text = text;
     else if ("innerFormat" in item) item.innerFormat = text;
     else item.text = text;
+    // Reassign array to trigger Svelte reactivity after in-place mutation
+    if (preset?.promptTemplate) {
+      preset.promptTemplate = [...preset.promptTemplate];
+    }
   }
 
   function addPromptItem() {

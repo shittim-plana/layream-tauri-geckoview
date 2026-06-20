@@ -79,5 +79,5 @@ export async function dispatchChat(invoke, provider, settings, msgs, systemPromp
       reasoning_effort: c.reasoning_effort ?? null,
     });
   }
-  return undefined;
+  throw new Error(`Unknown provider: ${provider}`);
 }

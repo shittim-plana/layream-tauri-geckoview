@@ -5,7 +5,7 @@
   import { flashError } from "../lib/flashError.js";
   import HypaModal from "../components/HypaModal.svelte";
   import ResizableTextarea from "../components/ResizableTextarea.svelte";
-  import { getWorkspaceVersion } from "../lib/appStore.svelte.js";
+  import { getWorkspaceVersion, isSwitchingWorkspace } from "../lib/appStore.svelte.js";
 
   let { onReady } = $props();
 
@@ -133,8 +133,10 @@
     // Track all HyPA config values
     hypaEnabled; hypaSummaryModel; hypaSummaryTemp; hypaSummaryPrompt;
     hypaSummaryUnit; hypaEmbeddingProvider; hypaEmbeddingModel; hypaSimilarRatio;
-    // Only save after initial load to avoid overwriting with defaults
-    if (hypaSettingsLoaded) {
+    // Only save after initial load to avoid overwriting with defaults.
+    // Skip saving while a workspace switch is in progress to prevent
+    // stale/default values from overwriting the incoming workspace's settings.
+    if (hypaSettingsLoaded && !isSwitchingWorkspace()) {
       scheduleHypaSettingsSave();
     }
   });

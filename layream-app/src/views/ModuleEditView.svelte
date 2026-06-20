@@ -41,9 +41,11 @@
       name = mod?.name ?? moduleName ?? "";
       description = mod?.description ?? "";
 
-      // Deep-clone lorebook entries so mutations are local
+      // Deep-clone lorebook entries so mutations are local.
+      // Preserve the original raw entry so unknown fields survive round-trip.
       const rawLore = mod?.lorebook ?? mod?.loreBook ?? [];
       lorebook = rawLore.map(entry => ({
+        _raw: { ...entry },
         key: entry.key ?? (entry.keys ? entry.keys.join(", ") : ""),
         secondkey: entry.secondkey ?? entry.secondKey ?? "",
         content: entry.content ?? "",
@@ -59,6 +61,7 @@
 
       const rawRegex = mod?.regex ?? [];
       regex = rawRegex.map(r => ({
+        _raw: { ...r },
         comment: r.comment ?? "",
         in: r.in ?? r.pattern ?? "",
         out: r.out ?? "",
@@ -77,6 +80,7 @@
     const mod = moduleData?.module ?? moduleData ?? {};
 
     const updatedLorebook = lorebook.map(entry => ({
+      ...(entry._raw || {}),
       key: entry.key,
       secondkey: entry.secondkey,
       content: entry.content,
@@ -88,10 +92,11 @@
       useRegex: entry.useRegex,
       activationPercent: entry.activationPercent,
       disable: entry.disable,
-      extentions: { risu_case_sensitive: false },
+      extentions: { ...(entry._raw?.extentions || {}), risu_case_sensitive: false },
     }));
 
     const updatedRegex = regex.map(r => ({
+      ...(r._raw || {}),
       comment: r.comment,
       in: r.in,
       out: r.out,

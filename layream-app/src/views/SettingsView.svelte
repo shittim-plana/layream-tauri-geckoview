@@ -375,12 +375,20 @@
     gcaProjectLoading = false;
   }
 
-  function exportGcaConfig() {
+  async function exportGcaConfig() {
     const data = { gcaModel, gcaConfig };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = "gca-config.json"; a.click();
-    URL.revokeObjectURL(url);
+    const jsonBytes = new TextEncoder().encode(JSON.stringify(data, null, 2));
+    try {
+      await invoke("save_file_to_downloads", {
+        filename: "gca-config.json",
+        data: Array.from(jsonBytes),
+      });
+    } catch (saveErr) {
+      const blob = new Blob([jsonBytes]);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = "gca-config.json"; a.click();
+      URL.revokeObjectURL(url);
+    }
   }
 
   async function importGcaConfig(name, data) {
@@ -393,12 +401,20 @@
     } catch (e) { console.error("GCA config import failed:", e); }
   }
 
-  function exportAllSettings() {
+  async function exportAllSettings() {
     const data = collectSettings();
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = "layream-settings.json"; a.click();
-    URL.revokeObjectURL(url);
+    const jsonBytes = new TextEncoder().encode(JSON.stringify(data, null, 2));
+    try {
+      await invoke("save_file_to_downloads", {
+        filename: "layream-settings.json",
+        data: Array.from(jsonBytes),
+      });
+    } catch (saveErr) {
+      const blob = new Blob([jsonBytes]);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = "layream-settings.json"; a.click();
+      URL.revokeObjectURL(url);
+    }
   }
 
   async function importAllSettings(name, data) {

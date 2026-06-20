@@ -228,7 +228,7 @@
       <FileImport
         accept="application/json,image/png,image/jpeg,application/octet-stream"
         label="캐릭터 파일 불러오기"
-        extensions=".charx, .png, .jpeg, .json"
+        extensions=".charx, .png, .jpg, .jpeg, .json"
         onfile={handleFile}
         disabled={loading}
       />
@@ -250,7 +250,7 @@
           {#if editMode}
             <button class="btn btn-sm btn-primary" onclick={saveCharacter}>저장</button>
           {/if}
-          <button class="btn btn-sm btn-danger" onclick={closeCharacter}>Close</button>
+          <button class="btn btn-sm btn-danger" onclick={closeCharacter}>닫기</button>
         </div>
       </div>
       {#if data?.creator}

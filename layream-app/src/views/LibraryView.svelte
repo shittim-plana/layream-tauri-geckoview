@@ -159,7 +159,7 @@
       }
       const name = (data?.[k.currentNameField] && String(data[k.currentNameField]).trim()) || k.defaultName;
       await invoke(k.save, { name, data });
-      flashStatus(`Saved "${name}" to library`);
+      flashStatus(`"${name}" 저장됨`);
       await refresh(kindId);
     } catch (e) {
       error = toUserError(e, "라이브러리 저장").message;
@@ -173,9 +173,9 @@
       const data = await invoke(k.load, { id });
       if (k.currentSave && k.currentArgKey) {
         await invoke(k.currentSave, { [k.currentArgKey]: data });
-        flashStatus(`Loaded — open ${k.label.slice(0, -1)} tab`);
+        flashStatus(`불러옴 — ${k.label.slice(0, -1)} 탭에서 확인하세요`);
       } else {
-        flashStatus(`Loaded (no current slot for ${k.label})`);
+        flashStatus(`불러옴 (${k.label}에 현재 슬롯 없음)`);
       }
     } catch (e) {
       error = toUserError(e, "라이브러리 로드").message;
@@ -194,7 +194,7 @@
     confirmDelete = null;
     try {
       await invoke(k.del, { id });
-      flashStatus("Deleted");
+      flashStatus("삭제됨");
       await refresh(kindId);
     } catch (e) {
       error = toUserError(e, "삭제").message;
@@ -298,11 +298,11 @@
           <div style="display: flex; gap: 6px;">
             {#if k.currentLoad}
               <button class="btn btn-sm btn-primary" onclick={() => saveCurrent(k.id)}>
-                Save current
+                현재 저장
               </button>
             {/if}
             <button class="btn btn-sm btn-secondary" onclick={() => refresh(k.id)}>
-              Refresh
+              새로고침
             </button>
           </div>
         </div>
@@ -314,9 +314,9 @@
         {:else if lists[k.id].length === 0}
           <div class="card-body" style="text-align: center; color: var(--fg3);">
             {#if k.currentLoad}
-              No saved {k.label.toLowerCase()}. Load one in the {k.label.slice(0, -1)} tab, then click "Save current".
+              저장된 {k.label.toLowerCase()}이(가) 없습니다. {k.label.slice(0, -1)} 탭에서 불러온 후 "현재 저장"을 클릭하세요.
             {:else}
-              No saved {k.label.toLowerCase()}.
+              저장된 {k.label.toLowerCase()}이(가) 없습니다.
             {/if}
           </div>
         {:else}
@@ -396,13 +396,13 @@
       ></button>
       <div class="card" style="position: relative; max-width: 320px; margin: 16px;">
         <div class="card-header">
-          <span class="card-title">Delete?</span>
+          <span class="card-title">삭제?</span>
         </div>
         <div class="card-body">
           <p style="margin-bottom: 12px;">{confirmDelete.name}</p>
           <div style="display: flex; gap: 8px; justify-content: flex-end;">
-            <button class="btn btn-sm btn-secondary" onclick={() => confirmDelete = null}>Cancel</button>
-            <button class="btn btn-sm btn-danger" onclick={performDelete}>Delete</button>
+            <button class="btn btn-sm btn-secondary" onclick={() => confirmDelete = null}>취소</button>
+            <button class="btn btn-sm btn-danger" onclick={performDelete}>삭제</button>
           </div>
         </div>
       </div>

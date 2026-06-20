@@ -3,6 +3,8 @@
   import ChatView from "./ChatView.svelte";
   import AutopilotView from "./AutopilotView.svelte";
   import HypaView from "./HypaView.svelte";
+  import { assemblePrompt } from "../lib/assemblePrompt.js";
+  import { flashError } from "../lib/flashError.js";
 
   let subTab = $state("chat");
 
@@ -89,11 +91,17 @@
       if (settingsResult.status === "fulfilled" && typeof settingsResult.value?.userName === "string" && settingsResult.value.userName.length > 0) {
         userName = settingsResult.value.userName;
       }
-      previewText = await invoke("evaluate_cbs", {
-        input: "{{// Prompt preview requires a loaded preset}}",
-        char_name: charName,
-        user_name: userName,
-      });
+      let loadedCharacter = null;
+      let settings = {};
+      try { loadedCharacter = charResult.status === "fulfilled" ? charResult.value : null; } catch (_) {}
+      try { settings = settingsResult.status === "fulfilled" ? (settingsResult.value || {}) : {}; } catch (_) {}
+
+      try {
+        const pr = await assemblePrompt(invoke, flashError, { loadedCharacter, settings, activeToggles: {}, conversationText: "", queryEmbedding: null });
+        previewText = [pr.systemPrompt || "", pr.postChatText || ""].filter(Boolean).join("\n\n--- postChatText ---\n\n") || "(Empty prompt — check preset and character)";
+      } catch (assembleErr) {
+        previewText = `Prompt assembly requires a loaded preset and character.\n\nDetail: ${assembleErr}`;
+      }
     } catch (e) {
       previewText = `Error: ${e}`;
     }
@@ -146,7 +154,7 @@
           <div class="preview" style="max-height: 500px;">{previewText}</div>
         {:else}
           <div class="empty-state">
-            <p>Load a preset and configure prompts to see the assembled result</p>
+            <p>프리셋을 불러와서 프롬프트를 구성하면 조립 결과를 볼 수 있습니다</p>
           </div>
         {/if}
       </div>
@@ -168,7 +176,7 @@
             로그 파일 저장
           </label>
           {#if requestLogs.length > 0}
-            <button class="btn btn-sm btn-danger" onclick={clearLogs}>Clear</button>
+            <button class="btn btn-sm btn-danger" onclick={clearLogs}>지우기</button>
           {/if}
         </div>
       </div>
@@ -202,7 +210,7 @@
       {:else}
         <div class="card-body">
           <div class="empty-state">
-            <p>No API logs yet. Logs are recorded when API calls are made.</p>
+            <p>API 로그가 아직 없습니다. API 호출 시 로그가 기록됩니다.</p>
           </div>
         </div>
       {/if}

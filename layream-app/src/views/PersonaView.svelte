@@ -1,12 +1,13 @@
 <script>
   import { onMount } from "svelte";
   import { invoke } from "../lib/tauri.js";
-  import { flashError } from "../lib/flashError.js";
+  import { flashError, flashWarning } from "../lib/flashError.js";
   import {
     getPersonas, getSelectedPersona,
     setPersonas, setSelectedPersona,
     savePersonas, loadPersonas,
     getCurrentCharacter,
+    getWorkspaceVersion,
   } from "../lib/appStore.svelte.js";
 
   let personas = $state([]);
@@ -33,6 +34,21 @@
       flashError(e, "페르소나 로드");
     }
     sync();
+  });
+
+  // Re-load personas when workspace switches
+  $effect(() => {
+    const wsVersion = getWorkspaceVersion();
+    if (wsVersion === 0) return;
+    (async () => {
+      try {
+        await loadPersonas(invoke);
+      } catch (e) {
+        console.warn("loadPersonas (workspace switch):", e);
+        flashError(e, "페르소나 로드");
+      }
+      sync();
+    })();
   });
 
   function generateId() {
@@ -108,10 +124,17 @@
 
   async function importFromCharacter() {
     const char = getCurrentCharacter();
+    if (!char) {
+      flashWarning("로드된 캐릭터가 없습니다. 캐릭터 탭에서 먼저 캐릭터를 불러와 주세요.");
+      return;
+    }
     const card = char?.card?.data || char?.card || {};
     const personality = card.personality || "";
     const charName = card.name || "Character";
-    if (!personality.trim()) return;
+    if (!personality.trim()) {
+      flashWarning(`"${charName}" 캐릭터에 성격(personality) 데이터가 없습니다.`);
+      return;
+    }
     const p = {
       id: generateId(),
       name: charName,

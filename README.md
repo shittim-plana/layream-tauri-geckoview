@@ -89,7 +89,7 @@ npm run tauri android build -- --apk --target aarch64
 ## Related
 
 - [tauri-geckoview-template](https://github.com/shittim-plana/tauri-geckoview-template) — GeckoView + Tauri 2.0 template
-- [vertex-ai-oauth](https://github.com/shittim-plana/vertex-ai-oauth) — OAuth 2.0 for Vertex AI (JS + Rust)
+- [vertex-ai-oauth](https://github.com/shittim-plana/vertex-ai-oauth) — OAuth 2.0 for Vertex AI (Browser / Server / Native)
 
 ## License
 
